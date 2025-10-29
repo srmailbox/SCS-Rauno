@@ -1,0 +1,145 @@
+---
+title: "Estimating reliability"
+author: "Serje Robidoux"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=6, fig.width=6, warning=FALSE)
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+library(ggpubr)
+library(psych)
+library(kableExtra)
+library(pander)
+```
+
+```{r readData}
+# First step is to read in the data
+rawDataFile = 'ACUReadingInitiative.scsRaw.RDat'
+if(file.exists(rawDataFile)) load(rawDataFile) else {
+  scsRaw = read.csv('ACU Reading Initiative - Export - Export (2).csv'
+                    , na.strings = c("Absent ", "absent ", "Absent", "absent"
+                                     , "-", "NULL"))
+  save(scsRaw, file=rawDataFile)
+}
+
+#str(scsRaw)
+#Looks like a lot of the numeric data is being read in as character strings. 
+#Fixed by treating "Absent", "Absent ", "absent", "absent ", "-", and "NULL" as 
+#missing values.
+
+```
+
+# Questions
+
+1. how many protocols (participants) do we need to be able to calculate a good enough reliability? I don’t think I can get all protocols, and around 450 entered 15 times is too much.
+
+2. Can we already rule out some of the tests on the basis of the data we have? For example, ENG1, GEO1, MAT1  seem much more difficult than the rest (or it is only because they were the first?), and REL2 might be too easy. Skewness and kurtosis values seem good for all tests. 
+
+# 1. Reliability
+
+This is a difficult question for me to answer without more detail about the matrices. The internal (Cronbach-type) reliability is essentially a measure of the degree to which items correlate with each other. More "items" will improve the alpha, assuming the items are correlated with each other. Larger samples will improve the precision and accuracy of the estimate of the reliability.
+
+For example in the following figures, I've randomly 10000 participants and 50 binary variables. The correlations amongst the variables are generally in the .2 to .4 range: The 1225 correlations are distributed as follows.
+
+```{r reliabilitySims}
+# Create 50 moderately correlated items rho~ U(.3, .7)
+
+if(file.exists('ACUReadingInitiative.estAlpha.RDat')) {
+  load('ACUReadingInitiative.estAlpha.RDat')
+} else {
+  upperUniform = .7
+  lowerUniform = .3
+  sigmaMat = diag(50)*.5
+  sigmaMat[lower.tri(sigmaMat, diag=FALSE)]=
+    runif(sum(lower.tri(sigmaMat, diag=FALSE)), lowerUniform, upperUniform)
+  sigmaMat = sigmaMat + t(sigmaMat)
+  dat = mvtnorm::rmvnorm(10000, sigma = sigmaMat)
+  
+  datBin = dat
+  datBin[datBin>=.5]=1
+  datBin[datBin<.5] =0
+  
+  nItems = 1:5*10
+  nSubj = 1:20*50
+  nSim = 100
+  
+  estAlpha = expand.grid(items = nItems, sample = nSubj, sim=1:nSim
+                         , lower.ci=0, alpha=0, upper.ci=0, trueAlpha = 0)
+  for(i in nItems) {
+    for(s in nSubj) {
+      simCols=sample(ncol(datBin), i)
+      trueAlpha = alpha(datBin[,simCols])
+      estAlpha$trueAlpha[estAlpha$items == i & estAlpha$sample==s]=
+        trueAlpha$total$raw_alpha
+      for(sim in 1:nSim) {
+        datSim = datBin[sample(nrow(datBin), s),simCols]
+        alphaSim = alpha(datSim)
+        estAlpha[estAlpha$items == i & estAlpha$sample==s & estAlpha$sim==sim
+                 ,c("lower.ci", "alpha", "upper.ci")]=
+          c(alphaSim$feldt$lower.ci, alphaSim$feldt$alpha, alphaSim$feldt$upper.ci)
+      }
+      
+    }
+  }
+  
+save(estAlpha, file='ACUReadingInitiative.estAlpha.RDat')
+}
+```
+
+
+```{r corDist}
+hist(cor(datBin)[lower.tri(cor(datBin), diag=F)]
+     , main = "Distribution of pairwise inter-item correlations"
+     , xlab = "correlation")
+```
+
+
+```{r estAlpha}
+estAlpha = estAlpha %>% 
+  mutate(alphaInCI = lower.ci <= trueAlpha & trueAlpha <= upper.ci
+         , CIwidth = upper.ci - lower.ci)
+
+estAlpha.summary = estAlpha %>% 
+  group_by(items, sample) %>% 
+  summarise(meanAlpha = mean(alpha)
+            , meanCIwidth = mean(CIwidth)
+            , alphaInCI = mean(alphaInCI)
+            , trueAlpha = mean(trueAlpha))
+```
+
+### 1.2 Alpha by items and sample size
+
+From the figure below you can see that the reliability increases, and gets more stable as I add more (somewhat correlated) items.
+
+```{r simAlphas}
+ggplot(estAlpha.summary, aes(x=sample, y=meanAlpha, col=items, Group=factor(items))) +
+  geom_line()+theme_minimal()+scale_x_continuous(breaks = nSubj)+ylab("Alpha")
+```
+
+
+### 1.2 CI widths by items and sample size ####
+
+The confidence interval around the reliability gets smaller as the number of items (and hence alpha) increases, and also as the sample gets larger.
+
+```{r simWidths}
+ggplot(estAlpha.summary, aes(x=sample, y=meanCIwidth, col=items, Group=factor(items))) +
+  geom_line()+theme_minimal()+scale_x_continuous(breaks = nSubj)+ylab("CI Width")
+```
+
+Benefits of larger samples never entirely goes away, although if there is a high reliability, then the benefits shrink rapidly.
+
+If the goal is to be within +/- .05 (CI width of .1) of the true alpha, then 50 participants will do if the alpha is high, but 200 or more are needed if the true alpha is below .8.
+
+### 1.3 Probability that a CI includes the "true" population reliability ####
+
+This is just a quick check to make sure that our CIs always have a high chance  of including the true alpha.
+
+```{r simCoverRate}
+ggplot(estAlpha.summary, aes(x=sample, y=alphaInCI, col=items, Group=factor(items))) +
+  geom_line()+theme_minimal()+scale_x_continuous(breaks = nSubj)+ylab("Coverage Probability")
+
+```

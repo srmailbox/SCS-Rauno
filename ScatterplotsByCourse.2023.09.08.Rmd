@@ -1,0 +1,385 @@
+---
+title: "First Look at Results by Course"
+author: "Serje Robidoux"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=6, fig.width=6)
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+library(ggpubr)
+library(psych)
+library(kableExtra)
+library(pander)
+```
+
+# Email from Rauno
+I have attached here a csv file (zipped) of data from schools I work with. The data is organised in a bit of a backward manner and requires reorgnising that I think you can do much quicker than I can. The first column identifies the school so no problem with that. The second column (SIS_ID) identifies each student and the same student can be present here up to 15 times (hypothetically, not sure what the actual numbers are). The third column identifies the class and we need to use these codes to create separate files for English, Maths, Science, History and Religious education as what is listed under Test 1, Test 2 and Test 3 is different in each subject. The rest is more or less self-evident and PAT and NAPLAN scores should of course be the same if the SIS_ID is the same (but I haven’t checked). I need to decide later which of these scores we will use for validation purposes.
+
+It seems to me that these are the key codes:
+
+* English - *ENG*
+* History - *GEO* or *HIS*
+* Math - *MAT*
+* Religious education - *REL*
+* Science - *SCI* 
+
+The first one or two numbers in Class just identify these as Year 7 students so they don’t matter. The last letter (school A), number (school B, D, E, and F) or letters (school C, D) identify the classroom so we should keep those codes somewhere in case the schools come back and ask for by class information. We definitely need to be able to report each school their results.
+
+Students were supposed to complete three mazes in each topic so it is possible that a student has all 5 scores in Test 1, 2, and 3 columns, but they actually represent five different tests.
+
+What I want to know first is the distributions of scores in each topic area for the three tests and then the correlations among them. We also need to figure out how many students completed all 15 tests, 14 tests and so on, and whether those subsamples are representative.
+
+Once we get the distributions figured out, we can look at correlations across the topics for those students who completed all (or most) of the tests and also figure out whether tests in different topics correlate differently with PAT and NAPLAN scores.
+
+
+```{r readData}
+# First step is to read in the data
+rawDataFile = 'ACUReadingInitiative.scsRaw.RDat'
+if(file.exists(rawDataFile)) load(rawDataFile) else {
+  scsRaw = read.csv('ACU Reading Initiative - Export - Export (2).csv'
+                    , na.strings = c("Absent ", "absent ", "Absent", "absent"
+                                     , "-", "NULL"))
+  save(scsRaw, file=rawDataFile)
+}
+
+#str(scsRaw)
+#Looks like a lot of the numeric data is being read in as character strings. 
+#Fixed by treating "Absent", "Absent ", "absent", "absent ", "-", and "NULL" as 
+#missing values.
+
+```
+
+
+```{r checkStrVals}
+#apply(scsRaw %>% select_if(is.character), 2, unique)
+# Need to treat "Absent ", "absent ", "Absent", "absent", "-", and "NULL" as 
+# missing values.
+
+```
+
+# Uniqueness of PAT and NAPLAN
+```{r checkPATNAPLAN}
+# First check that PAT and NAPLAN scores are unique by student.
+
+# range(
+#   by(
+#     scsRaw%>% select_if(is.numeric) %>% 
+#       select(matches("PAT"), matches("NAPLAN"))
+#     , scsRaw$SIS.ID
+#     , function(x) x %>% unique %>% nrow
+#   ) %>% 
+#     lapply(function(x) x) %>% unlist
+# )
+
+#Perfect, the values appear to be unique for each student so nothing to worry about here.
+
+```
+
+
+```{r renameCols}
+#It looks like Test1 incorrect column has been mislabeled.
+scs = scsRaw %>% rename(Test.1.Num.Incorrect= Test.1.Num.Correct.1)
+```
+
+
+```{r splitByClass}
+scs = scs %>% select(-matches("PAT"), -matches("NAPLAN")) %>% 
+  mutate(Course = str_extract(Class, "ENG|SCI|MAT|REL|HIS|GEO")
+         , Course = ifelse(Course=="HIS", "GEO", Course)
+         , Grade = str_split(Class, Course, simplify = T)[1]
+         , Classroom = str_split(Class, Course, simplify = T)[2])
+
+# First, I think we should reorganize the Test data to be long format
+# Splitting both Correct and Incorrect simultaneously was a fun new thing to
+# learn.
+scsLong = scs %>% select(-Class) %>% 
+  pivot_longer(cols = starts_with("Test"), names_to = c("Test", ".value"), names_pattern = "Test\\.(.)\\.Num.(.*)")
+
+# Split data by Class (ENG, MATH, etc...)
+scsClasses = by(scs %>% select(-Course), scs$Course, function(x) x)
+
+# Create a separate data.frame with only PAT and NAPLAN data for each child.
+scsClasses$Assessments = 
+    scsRaw %>% select(SIS.ID, matches("PAT"), matches("NAPLAN")) %>% unique
+#Looks ok to me.
+```
+
+PAT and NAPLAN scores are perfectly consistent for each SIS.ID, so nothing to do here.
+
+## Check for missingness
+
+There appear to be 8 instances where we have a Correct score, but no Incorrect (7), or vice versa (1).
+
+```{r missingScores}
+#with(scsLong, table(is.na(Correct), is.na(Incorrect)))
+
+scsLong %>% filter(is.na(Correct) | is.na(Incorrect), !(is.na(Incorrect) & is.na(Correct)))
+```
+
+I'll just ignore this for the time being.
+
+# Check for number of tests by Student
+
+```{r countPerStudent, fig.height = 4}
+scsLong %>% select(-matches("PAT"), -matches("NAPLAN")) %>% drop_na() %>% 
+  group_by(SIS.ID) %>% summarize(nTests=n()) %>%
+  ggplot(aes(x=nTests)) + 
+  geom_histogram(bins=15) +
+  stat_bin(binwidth=1, geom='label', color='black', alpha = .7, size=4,
+           aes(label=after_stat(count)), position=position_stack(vjust=1))+
+  scale_x_continuous(breaks=1:15)
+```
+
+The amount of data per student varies pretty wildly.
+
+I suppose that's not too surprising, since not all students appear in all Courses.
+
+\newpage
+
+# Descriptives, distributions and correlations, grouped by Course
+
+## Descriptives
+
+### PAT & NAPLAN Scores
+
+```{r patDescs}
+
+patDescs = describe(scsClasses$Assessments %>% select(-SIS.ID), omit=T) %>% 
+  as.data.frame() %>% rownames_to_column('rn') %>% 
+  mutate(Src = str_extract(rn, "PAT|NAPLAN")
+         , Year = str_extract(rn, "2021|2022|2023")
+         , Scale = str_replace_all(rn, "PAT|NAPLAN|2021|2022|2023", "")
+         , Scale = str_replace(Scale, "\\.Score", "")
+         , Scale = str_trim(str_replace_all(Scale, "\\.", " "))
+         , Scale = ifelse(Scale == "Grammar and Punctuation", "Grammar", Scale))
+
+# kable(patDescs %>% select(Assessment, Year, Scale, n, mean, sd, median, min, max, skew
+#                           , kurtosis)
+#       , digits=2) %>% kable_styling(latex_options = "striped")
+
+patDescs %>% 
+  mutate(skew = round(skew, 2), kurtosis = round(kurtosis, 2)
+         , Src = paste(Src, Year, Scale)) %>% 
+  select(Src, n, mean, sd, median, min, max, skew
+         , kurtosis) %>% 
+  rename(kurt = kurtosis) %>% 
+  arrange(Src) %>% 
+  pander
+```
+
+### Tests by Course
+
+```{r testDescs}
+
+testDescs = 
+  lapply(scsClasses
+         , function(x) 
+           if(is.null(x$PAT.Reading.2022)) {
+             describe(x %>% select(matches("\\.Correct")), omit=T) %>% 
+               rownames_to_column('rn') %>% 
+               mutate(Test = str_extract(rn, "1|2|3")) %>% 
+               select(Test, n, mean, sd, median, min, max, skew
+                      , kurtosis) %>% as.data.frame
+           }
+  ) %>% bind_rows
+
+testDescs$Course = gl(5,3, labels = names(scsClasses)[-6])
+
+# kable(testDescs %>% 
+#         select(Course, Test, n, mean, sd, median, min, max, skew, kurtosis)
+#       , digits = 2)
+testDescs %>% 
+  select(Course, Test, n, mean, sd, median, min, max, skew, kurtosis) %>% 
+  pander
+```
+
+## Histograms and Densities by Course
+
+The following histograms and scatterplots are based on the number of Correct responses.
+
+
+```{r testHistograms, warning=FALSE, message=FALSE}
+
+suppressWarnings(
+  scsLong %>% 
+  ggplot(aes(x=Correct))+
+  facet_grid(Course~Test)+
+  geom_histogram(binwidth=3)+
+  geom_density(mapping=aes(y=3*after_stat(count)))
+)
+
+```
+
+
+## Scatterplots by Course
+
+```{r engProfiles}
+
+pos.x = 0; pos.y=60
+ENG12=ggplot(scsClasses$ENG, aes(x=Test.1.Num.Correct, y=Test.2.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T2")+xlab("Test 1")+ylab("Test 2")
+
+ENG13=ggplot(scsClasses$ENG, aes(x=Test.1.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T3")+xlab("Test 1")+ylab("Test 3")
+
+ENG23=ggplot(scsClasses$ENG, aes(x=Test.2.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T2 v T3")+xlab("Test 2")+ylab("Test 3")
+
+suppressWarnings(
+  grid.arrange(
+    ggMarginal(ENG12, type="densigram")
+    , ggMarginal(ENG13, type="densigram")
+    , ggMarginal(ENG23, type="densigram")
+    , layout_matrix=matrix(c(1,NA,1,3,2,3,2,NA), nrow=2)
+    , top = "English"
+  )
+)
+
+```
+
+```{r geoProfiles}
+
+pos.x = 35; pos.y=10
+GEO12=ggplot(scsClasses$GEO, aes(x=Test.1.Num.Correct, y=Test.2.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T2")+xlab("Test 1")+ylab("Test 2")
+
+GEO13=ggplot(scsClasses$GEO, aes(x=Test.1.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T3")+xlab("Test 1")+ylab("Test 3")
+
+GEO23=ggplot(scsClasses$GEO, aes(x=Test.2.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T2 v T3")+xlab("Test 2")+ylab("Test 3")
+
+suppressWarnings(
+  grid.arrange(
+    ggMarginal(GEO12, type="densigram")
+    , ggMarginal(GEO13, type="densigram")
+    , ggMarginal(GEO23, type="densigram")
+    , layout_matrix=matrix(c(1,NA,1,3,2,3,2,NA), nrow=2)
+    , top = "Geography/History"
+  )
+)
+
+```
+
+```{r matProfiles}
+
+pos.x = 45; pos.y=10
+MAT12=ggplot(scsClasses$MAT, aes(x=Test.1.Num.Correct, y=Test.2.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T2")+xlab("Test 1")+ylab("Test 2")
+
+MAT13=ggplot(scsClasses$MAT, aes(x=Test.1.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T3")+xlab("Test 1")+ylab("Test 3")
+
+MAT23=ggplot(scsClasses$MAT, aes(x=Test.2.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T2 v T3")+xlab("Test 2")+ylab("Test 3")
+
+suppressWarnings(
+  grid.arrange(
+    ggMarginal(MAT12, type="densigram")
+    , ggMarginal(MAT13, type="densigram")
+    , ggMarginal(MAT23, type="densigram")
+    , layout_matrix=matrix(c(1,NA,1,3,2,3,2,NA), nrow=2)
+    , top = "Math"
+  )
+)
+
+```
+
+```{r relProfiles}
+
+pos.x = 0; pos.y=55
+REL12=ggplot(scsClasses$REL, aes(x=Test.1.Num.Correct, y=Test.2.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T2")+xlab("Test 1")+ylab("Test 2")
+
+REL13=ggplot(scsClasses$REL, aes(x=Test.1.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T3")+xlab("Test 1")+ylab("Test 3")
+
+REL23=ggplot(scsClasses$REL, aes(x=Test.2.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T2 v T3")+xlab("Test 2")+ylab("Test 3")
+
+suppressWarnings(
+  grid.arrange(
+    ggMarginal(REL12, type="densigram")
+    , ggMarginal(REL13, type="densigram")
+    , ggMarginal(REL23, type="densigram")
+    , layout_matrix=matrix(c(1,NA,1,3,2,3,2,NA), nrow=2)
+  , top = "Religion"
+  )
+)
+
+```
+
+```{r sciProfiles}
+
+pos.x = 0; pos.y=55
+SCI12=ggplot(scsClasses$SCI, aes(x=Test.1.Num.Correct, y=Test.2.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T2")+xlab("Test 1")+ylab("Test 2")
+
+SCI13=ggplot(scsClasses$SCI, aes(x=Test.1.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T1 v T3")+xlab("Test 1")+ylab("Test 3")
+
+SCI23=ggplot(scsClasses$SCI, aes(x=Test.2.Num.Correct, y=Test.3.Num.Correct))+
+  geom_point()+
+  stat_cor(aes(label = ..r.label..), method = "pearson", cor.coef.name = "r"
+           , label.x = pos.x, label.y = pos.y)+
+  ggtitle("T2 v T3")+xlab("Test 2")+ylab("Test 3")
+
+suppressWarnings(
+  grid.arrange(
+    ggMarginal(SCI12, type="densigram")
+    , ggMarginal(SCI13, type="densigram")
+    , ggMarginal(SCI23, type="densigram")
+    , layout_matrix=matrix(c(1,NA,1,3,2,3,2,NA), nrow=2)
+  , top = "Science"
+  )
+)
+
+```

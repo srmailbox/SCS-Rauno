@@ -1,0 +1,1058 @@
+---
+title: "Looking for Student Profiles"
+author: "Serje Robidoux"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=6, fig.width=6, warning = FALSE
+                      , message = FALSE)
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+library(ggpubr)
+library(psych)
+# library(Hmisc)
+library(kableExtra)
+library(pander)
+library(mclust)
+include(sjPlot)
+
+```
+
+```{r readData}
+# First step is to read in the data
+rawDataFile = 'ACUReadingInitiative.scsRaw.RDat'
+if(file.exists(rawDataFile)) load(rawDataFile) else {
+  scsRaw = read.csv('ACU Reading Initiative - Export - Export (2).csv'
+                    , na.strings = c("Absent ", "absent ", "Absent", "absent"
+                                     , "-", "NULL"))
+  save(scsRaw, file=rawDataFile)
+}
+
+scs = scsRaw %>% rename(Test.1.Num.Incorrect= Test.1.Num.Correct.1)
+
+#str(scsRaw)
+#Looks like a lot of the numeric data is being read in as character strings. 
+#Fixed by treating "Absent", "Absent ", "absent", "absent ", "-", and "NULL" as 
+#missing values.
+scs = scs %>% #select(-matches("PAT"), -matches("NAPLAN")) %>% 
+  mutate(Course = str_extract(Class, "ENG|SCI|MAT|REL|HIS|GEO")
+         , Course = ifelse(Course=="HIS", "GEO", Course)
+         , Grade = str_split(Class, Course, simplify = T)[1]
+         , Classroom = str_split(Class, Course, simplify = T)[2])
+
+# First, I think we should reorganize the Test data to be long format
+# Splitting both Correct and Incorrect simultaneously was a fun new thing to
+# learn.
+scsLong = scs %>% select(-Class) %>% 
+  pivot_longer(cols = starts_with("Test"), names_to = c("Test", ".value"), names_pattern = "Test\\.(.)\\.Num.(.*)")
+
+# Split data by Class (ENG, MATH, etc...)
+scsClasses = by(scs %>% select(-Course), scs$Course, function(x) x)
+
+# Create a separate data.frame with only PAT and NAPLAN data for each child.
+scsClasses$Assessments = 
+    scsRaw %>% select(SIS.ID, matches("PAT"), matches("NAPLAN")) %>% unique
+#Looks ok to me.
+
+
+scsWide = scsLong %>%# select(-Class) %>%  
+  pivot_wider(names_from = c("Course", "Test"), values_from=c("Correct", "Incorrect"))
+
+colnames(scsWide)=gsub("Correct_", "", colnames(scsWide))
+colnames(scsWide)=gsub("\\.Score", "", colnames(scsWide))
+colnames(scsWide)=gsub("Grammar\\.and\\.Punctuation", "Grammar", colnames(scsWide))
+
+
+```
+
+## Selecting Tests
+
+One goal of this project is to settle on a single matrix for each subject area. From the previous analyses, there isn't much to separate the tests but we have settled on the following:
+
+* English 3, Geography/History 1, Math 3, Religion 2, and Science 2
+
+These are largely based on selecting the tests that produced the least amount of "ceiling performance" suggesting that they discriminate between high performers, and where the correlations were somewhat stronger with the relevant national testing (e.g., English should correlate with NAPLAN Reading and Writing).
+
+Another dimension we might consider is to ask which test best captures the average performance across the three matrices.
+
+For this analysis, I submitted each group of 3 matrices to a Cronbach's alpha.
+
+```{r meanCors}
+
+engAlpha = alpha(scsWide %>% select(starts_with("ENG")))
+geoAlpha = alpha(scsWide %>% select(starts_with("GEO")))
+matAlpha = alpha(scsWide %>% select(starts_with("MAT")))
+sciAlpha = alpha(scsWide %>% select(starts_with("SCI")))
+relAlpha = alpha(scsWide %>% select(starts_with("REL")))
+
+print("ENGLISH")
+engAlpha
+
+print("GEOGRAPHY")
+geoAlpha
+
+print("MATH")
+matAlpha
+
+print("SCIENCE")
+sciAlpha
+
+print("RELIGION")
+relAlpha
+```
+
+* English: 2 is the one that most reliably associates with other measures, while 3 correlates most strongly with the total.
+* *Geography:* 2 and 3 are essentially tied here - 1 is the least effective.
+* Math: 3 is the clear winner here.
+* Religion: 2 is the clear winner here.
+* Science: 2 is the clear winner here.
+
+(Note that "winner" here is used rather boldly, since in most cases the differences are well within sampling error)
+
+### Revised set of matrices
+
+For Geography, it seems that 2 has the nicest "statistics" in the sense that it best captures the overall performance on the GEO matrices, and correlates most strongly with the national scales (although it is worth noting that these differences amongst matrices are largely within sampling error ranges and GEO_2 and GEO_3 are nearly identical). On the other hand, the histogram for 2 seems to produce something of a ceiling effect - although it's not super pronounced. It really is very difficult to pick one here, but I think there's enough reason to choose GEO_2 that I've swapped it in.
+
+* English 3, *Geography/History 2*, Math 3, Religion 2, and Science 2
+
+```{r finalSetOfMatrices}
+
+finalMatrices = c("ENG_2", "GEO_2", "MAT_3", "REL_2", "SCI_2")
+```
+
+### Reliability
+
+Cronbach's alpha according to different sets of tests.
+
+#### All Matrices
+
+```{r cronbachAllMatrices}
+
+alpha.fullset = psych::alpha(scsWide %>% select(matches("_"), -matches("Incorrect")))
+alpha.fullset
+```
+
+Reliability across the full set is very, very high, and there would be no reason to drop or focus on any particular matrix based on these results.
+
+#### All Matrices except GEO
+
+Geography has the smallest samples (including Geography costs us about 30% of the sample), so I will revisit most of the analyses ignoring GEO to see if that changes the outcomes.
+
+```{r cronbachAllButGeo}
+
+alpha.noGeo = psych::alpha(scsWide %>% select(matches("_"), -matches("Incorrect"), -starts_with("GEO")))
+alpha.noGeo
+
+```
+
+Same deal as the full set, although the reliability does drop a bit amount without the Geography matrices.
+
+#### Selected Matrices
+
+```{r}
+
+alpha.selected = psych::alpha(scsWide %>% select(all_of(finalMatrices)))
+alpha.selected
+```
+
+Still quite a high reliability, but it seems that ENG_2 and REL_2 are not contributing to the reliability much on their own (in the sense that removing those matrices would have little influence on the reliability). 
+
+#### Selected except for GEO
+
+```{r}
+
+alpha.selectednoGeo = psych::alpha(scsWide %>% select(all_of(finalMatrices),-GEO_2))
+alpha.selectednoGeo
+```
+
+As implied by the overall results for the selected matrices, removing GEO reduces the reliability from .9 to .86.
+
+## Clustering and Profiling
+
+### Factor Analysis
+
+We've already done this with the full set of matrices and the NAPLAN/PAT data without much luck, and of course we have fewer measures now (5) so I would expect that this will be no more useful. In fact, we can only include 2 factors.
+
+```{r factorAnalysis}
+
+factanal(scsWide %>% select(all_of(finalMatrices)) %>% drop_na,2)
+```
+
+The two factors do seem to be explanatory, but it looks to me like it's F1: everything but Geography, F2: Geography. It's worth noting that Science is nearly equally loading on both factors, and the loadings for Math and English aren't dramatically extreme so the factors don't feel overly distinctive to me. Indeed, though we fit two factors here, the single factor model captures almost all of the same variance.
+
+Another interesting thing to note is that the two factor model almost completely explains all of the variance in Geography. Performance in Geography (at least GEO_2) may best reflect the overall performance across the matrices. Even the single factor model explained 82% of the variance in Geography.
+
+### PCA
+
+Again, we've tried this with the inclusion of NAPLAN/PAT data and all of the matrices, so I don't expect to find a lot.
+
+```{r princomp}
+
+princomp(scsWide %>% select(all_of(finalMatrices)) %>% drop_na %>% scale)[c("loadings", "sdev")]
+```
+
+As usual with PCA, we get a "general skill" component first, and that captures 75% of the variability in the dataset so none of the other components are useful.
+
+### Hierarchical Clustering
+
+As discussed, clustering is ... finicky and generally not very robust, nonetheless it might provide some insights that raise questions. Given the results above, though, I am very skeptical that we'll find much of value here.
+
+#### Selected Matrices Only
+
+Figure 1 shows the dendrogram for fitting only the 5 selected matrices, with 6 groups "identified".
+
+```{r hclustSelect, fig.cap="Hierachical Clustering of the 5 selected matrices."}
+
+scs.dist = (scs.hclust = scsWide %>% 
+              select(all_of(finalMatrices)) %>%
+              drop_na %>% scale %>% data.frame) %>%  dist
+
+scs.cmplt = hclust(scs.dist)
+
+scs.hclust$hclust.cmplt = cutree(scs.cmplt, 6)
+
+plot(scs.cmplt, labels = scs.hclust$hclust.cmplt)
+```
+
+Clusters 5 and 6 are not terribly homogeneous. 1, 2, 3 are better, and 4 is pretty small, but fairly homogeneous.
+
+Table 1 summaries the matrix Means & SDs (of z-scores for each matrix), by group
+
+```{r selectHClustDescriptives}
+
+scs.hclust %>% rename(Cluster=hclust.cmplt) %>% group_by(Cluster) %>% 
+  summarize_all(function(x) 
+    paste0(round(mean(x),2)," (",round(sd(x),3),")")) %>% 
+  ungroup %>% 
+  slice(3,1,2,4,5,6) %>% 
+  pander(caption="Means (SD) of each matrix by cluster (Fig. 1)")
+
+```
+
+This is really just grouping students by general ability. Group 5 is a bit more mixed but is also only 4 students
+
+```{r selectHClustPlot, fig.cap="Boxplots of each Matrix z-score, grouped by Cluster"}
+
+scs.hclust %>% pivot_longer(-hclust.cmplt, names_to="matrix", values_to = "z") %>% 
+  ggplot(aes(x=matrix, y=z))+facet_wrap(vars(hclust.cmplt), ncol=3)+geom_boxplot()
+
+# scs.hclust %>%
+#   mutate(id=row_number()) %>% pivot_longer(ENG_2:SCI_2, names_to="matrix", values_to = "z") %>%
+#   filter(hclust.cmplt %in% c(1:3)) %>%
+#   ggplot(aes(x=matrix, y=z, colour=hclust.cmplt, group=id))+
+#   geom_line()+
+#   scale_color_continuous(guide="none")
+
+```
+
+As expected, we don't get a lot of nuance. Just a split along general skill with a few students who don't fit all that well in any group. Group 4 seems to be students who are just very very good at this task. Group 5 is 4 students who were very very good at the Religion matrix, but not particularly impressive otherwise.
+
+Group 6 is a single child.
+
+
+#### Full set of matrices
+
+```{r hclust, fig.cap = "Hierachical Clustering of the full set of matrices."}
+
+scs.full.dist = (scs.full.hclust = scsWide %>% 
+              select(matches("^(ENG|MAT|GEO|REL|SCI)")) %>%
+              drop_na %>% scale %>% data.frame) %>%  dist
+
+scs.full.cmplt = hclust(scs.full.dist)
+
+scs.full.hclust$hclust.cmplt = cutree(scs.full.cmplt, 8)
+
+plot(scs.full.cmplt, labels = scs.full.hclust$hclust.cmplt, cex=.5)
+```
+
+Clusters 6 and 8 are very small, so let's ignore them.
+
+```{r fullHClustDescriptives, fig.cap="Boxplots for matrices using the full clustering."}
+
+scs.full.hclust %>% filter(hclust.cmplt %in% c(1:5,7)) %>% 
+  group_by(hclust.cmplt) %>% 
+  summarize_all(function(x) 
+    paste0(round(mean(x),2)," (",round(sd(x),3),")")) %>% 
+  pander(cap="Means and SD for the clusters identified using the full set of matrices")
+
+scs.full.hclust %>% pivot_longer(-hclust.cmplt, names_to="matrix", values_to = "z") %>% 
+  filter(hclust.cmplt %in% c(1:5,7)) %>% 
+  ggplot(aes(x=matrix, y=z))+facet_wrap(vars(hclust.cmplt), ncol=3)+geom_boxplot()
+```
+
+
+I've ignored groups 6 and 8 which consist of only 4 and 2 students each, who are not particularly similar to each other. Among the other groups only 1 and 4 have significant numbers (57 and 45), and they seem to be "slightly above vs slightly below average". Groups 2, 3, 5, and 7 range from 11-18 students, and I don't see anything particularly compelling there. At a stretch group 2 (N=11) seems to be "very good at the task, in particular for ENG", while grp 3 (N=12) is very, very good at the task. Grp 5 (N=15) is very poor at the task. Grp 7 doesn't seem very coherent to me (N=18).
+
+\newpage
+
+### Latent Profiles
+
+LPA treats classes in a more nuanced way than hierarchical clustering does. Rather than simply grouping children according to the similarities in their scores across the measures, LPA assumes the data come from different populations that have different multivariate normal distributions. For example, one multivariate distribution might include a high scores on both ENG and MAT, with a high correlation between them. Another group might be average at MAT but high ENG, with a modest negative correlation.
+
+Since the "classes" are defined by multivariate normal distributions, the algorithm can then take each child and assign a probability that the child belongs to each class, so that rather than a single class assignment, assignments are more probabilistic.
+
+Given the results we've seen so far, I expect that we will largely find classes separated by overall abilities with relatively high correlations between scales.
+
+```{r selectedLPA}
+
+scsLPA = scsWide %>% select(all_of(finalMatrices)) %>% drop_na()
+
+scs.mclust = mclustBIC(scsLPA)
+
+```
+
+\newpage
+
+#### VVE, 2
+
+This model was the best fitting, and most flexible of the top models. It allows the classes to vary in shape and size between the two groups.
+
+The figure below shows how the means and covariance matrices differ by class (depicted by the circles), along with the "most probable" class assigned to each student (colours). The table summarizes means, SDs and group sizes.
+
+```{r selectedLPAVVE, fig.cap = "LPA results for VVE,2 model from mclust"}
+classCols = rgb(c(1,0,0), c(0,0,1), c(0,1,0), alpha=.25)
+scs.VVE2 = Mclust(scsLPA, x=scs.mclust, modelNames="VVE", G=2)
+plot(x=scs.VVE2, what="class", col=classCols)
+```
+
+```{r selectedLPAVVEtbl}
+merge(round(scs.VVE2$parameters$mean,1)
+      , round(sqrt(apply(scs.VVE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(scs.VVE2$classification))
+            , c("N wtd", round(colSums(scs.VVE2$z), 2))
+) %>% 
+  pander(cap="Matrix means and SDs for classes identified by VVE,2. N refers to the number of students for whom this is the MOST PROBABLE group, while N wtd treats the students as more probabilistic, summing the probabilities of group membership.")
+```
+
+There is very little to discriminate the groups here, other than a somewhat higher variance in the smaller group 1, along with a higher REL_2 score. All of the scores generally covary in similar ways.
+
+\newpage
+
+#### VEE, 2
+
+This model is relatively restrictive, insisting that shape and orientation is the same for each class, although they can still vary in size.
+
+```{r selectedLPAVEE, fig.cap = "LPA results for VEE,2 model from mclust"}
+scs.VEE2 = Mclust(scsLPA, x=scs.mclust, modelNames="VEE", G=2)
+plot(x=scs.VEE2, what="class", col=classCols)
+```
+
+Table of means and SDs
+
+```{r selectedLPAVEEtbl}
+merge(round(scs.VEE2$parameters$mean,1)
+      , round(sqrt(apply(scs.VEE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(scs.VEE2$classification))
+            , c("N wtd", round(colSums(scs.VEE2$z), 2))
+) %>% 
+  pander(cap="Matrix means and SDs for classes identified by VEE,2")
+```
+
+Essentially the same results as before, but with a somewhat smaller Group 1. The difference in the variances is a bit more pronounced.
+
+\newpage
+
+#### EVE, 2
+
+In this final model, the classes are assumed to take up the same amount of the overall variable space (this is not the same as having the same numbers of students)
+
+```{r selectedLPAEVE, fig.cap = "LPA results for EVE,2 model from mclust"}
+scs.EVE2 = Mclust(scsLPA, x=scs.mclust, modelNames="EVE", G=2)
+plot(x=scs.EVE2, what="class", col=classCols)
+```
+
+
+```{r selectedLPAEVEtbl"}
+merge(round(scs.EVE2$parameters$mean,1)
+      , round(sqrt(apply(scs.EVE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(scs.EVE2$classification))
+            , c("N wtd", round(colSums(scs.EVE2$z), 2))
+) %>% 
+  pander(cap="Matrix means and SDs for classes identified by EVE,2")
+```
+
+Once again, it seems that REL_2 is the only discriminating measure here. The groups differ more in the covariance matrix (the orienation of the ovals) than in the other models. It's worth noting that Group 1 is fairly small here, representing only 10% of the data.
+
+\newpage
+
+#### EVE, 3 (3 groups)
+
+The 3 group version of the EVE model is the best of the 3 group versions.
+
+```{r selectedLPAEVE3, fig.cap = "LPA results for EVE,3 model from mclust"}
+scs.EVE3 = Mclust(scsLPA, x=scs.mclust, modelNames="EVE", G=3)
+plot(x=scs.EVE3, what="class", col=classCols)
+```
+
+
+```{r selectedLPAEVE3tbl}
+merge(round(scs.EVE3$parameters$mean,1)
+      , round(sqrt(apply(scs.EVE3$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")) %>% 
+  select(Test, Group.1, Group.2, Group.3) %>% 
+  rbind(c("N", table(scs.EVE3$classification))
+            , c("N wtd", round(colSums(scs.EVE3$z), 2))
+) %>% 
+  pander(cap="Matrix means and SDs for classes identified by EVE,3")
+```
+
+Group 3 seems to be a particularly low performing group across the board. Still not much else to discriminate here, though Group 1 is higher than Group 2 on everything, but especially REL_2; and somewhat lower on ENG_2.
+
+I also looked at 4 or 5 groups (using the best fitting models for those), and the same pattern reoccurs - it generally just splits along skill, except that those high scores in REL_2 become a separate group (N=4). and a small group of poor ENG performers are identified (N=11).
+
+
+\newpage
+
+# Excluding GEO
+
+The GEO scale has the fewest respondents which means that we lose 113 students from our analyses by including that matrix (Going from 326 to 223). It is also the most highly correlated with the other matrices, with the other 4 matrices explaining 75% of the variance in GEO_2. So it might be sensible to consider whether some of these approaches might be more fruitful if it weren't included. This also provides something of a sensitivity test for the above by asking how much a change to the sample and variable choice influences outcomes.
+
+## Clustering and Profiling
+
+### Factor Analysis
+
+We can't really do FA here, as we do not have enough variables to fit more than one factor.
+
+### PCA
+
+
+```{r noGeoprincomp}
+noGeoMatrices = c("ENG_2", "MAT_3", "REL_2", "SCI_2")
+
+princomp(scsWide %>% select(all_of(noGeoMatrices)) %>% drop_na %>% scale)[c("loadings", "sdev")]
+```
+
+No new insights: still just one general skill component
+
+### Hierarchical Clustering
+
+As discussed, clustering is ... finicky and generally not very robust, nonetheless it might provide some insights that raise questions. Given the results above, though, I am very skeptical that we'll find much of value here.
+
+#### Selected Matrices Only
+
+```{r hclustnoGeo}
+
+scs.dist = (scs.hclust = scsWide %>% 
+              select(all_of(noGeoMatrices)) %>%
+              drop_na %>% scale %>% data.frame) %>%  dist
+
+scs.cmplt = hclust(scs.dist)
+
+scs.hclust$hclust.cmplt = cutree(scs.cmplt, 5)
+
+plot(scs.cmplt, labels = scs.hclust$hclust.cmplt, cex=.75)
+```
+
+Cluster 5 is small (N=8) with one student in particular who doesn't fit.
+
+
+```{r noGeoHClustDescriptives}
+
+scs.hclust %>% group_by(hclust.cmplt) %>% 
+  summarize_all(function(x) 
+    paste0(round(mean(x),2)," (",round(sd(x),3),")")) %>% 
+  ungroup %>% 
+  # slice(3,1,2,4,5,6) %>% 
+  pander(alignment = "right")
+
+```
+Looks to me like this is just split along ability, with cluster 5 identifying a group with unusually high scores on REL_2 (See below).
+
+```{r noGeoHClustPlot}
+
+scs.hclust %>% pivot_longer(-hclust.cmplt, names_to="matrix", values_to = "z") %>% 
+  ggplot(aes(x=matrix, y=z))+facet_wrap(vars(hclust.cmplt), ncol=3)+geom_boxplot()
+
+# scs.hclust %>%
+#   mutate(id=row_number()) %>% pivot_longer(ENG_2:SCI_2, names_to="matrix", values_to = "z") %>%
+#   filter(hclust.cmplt %in% c(1:3)) %>%
+#   ggplot(aes(x=matrix, y=z, colour=hclust.cmplt, group=id))+
+#   geom_line()+
+#   scale_color_continuous(guide="none")
+
+```
+
+Not sure we learned much here.
+
+
+### Latent Profiles
+
+```{r noGeoLPA}
+scsLPA = scsWide %>% select(all_of(noGeoMatrices)) %>% drop_na()
+
+scs.mclust = mclustBIC(scsLPA)
+
+```
+
+Not a tonne of changes. The same models seem to fit best, although we do have one model with 3 groups (that model was 4th best in the version including GEO)
+
+\newpage
+
+#### VVE, 2
+
+This model was the most flexible allowing the classes to vary in size and letting the covariance matrix differ between the two groups.
+
+The figure below shows how the means and covariance matrices differ by class (depicted by the circles), along with the "most probable" class assigned to each student (colours). The table summarizes means, SDs and group sizes.
+
+```{r noGeoLPAVVE, fig.cap = "VVE,2 results when GEO is excluded to increase sample size"}
+classCols = rgb(c(1,0,0), c(0,0,1), c(0,1,0), alpha=.25)
+scs.VVE2 = Mclust(scsLPA, x=scs.mclust, modelNames="VVE", G=2)
+plot(x=scs.VVE2, what="class", col=classCols)
+```
+
+
+```{r noGeoLPAVVEtbl}
+merge(round(scs.VVE2$parameters$mean,1)
+      , round(sqrt(apply(scs.VVE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(scs.VVE2$classification))
+            , c("N wtd", round(colSums(scs.VVE2$z), 2))
+) %>% 
+  pander("Means and SDs for VVE,2 (no GEO)")
+```
+Group 2 here is now more clearly "higher scores" (other than ENG) and more variability.
+
+\newpage
+
+#### EVE, 2
+
+In this next model, the classes are assumed to take up the same amount of the overall variable space (this is not the same as having the same numbers of students)
+
+```{r noGeoLPAEVE, fig.cap = "EVE,2 results when GEO is excluded to increase sample size"}
+scs.EVE2 = Mclust(scsLPA, x=scs.mclust, modelNames="EVE", G=2)
+plot(x=scs.EVE2, what="class", col=classCols)
+```
+
+
+```{r noGeoLPAEVEtbl}
+merge(round(scs.EVE2$parameters$mean,1)
+      , round(sqrt(apply(scs.EVE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(scs.EVE2$classification))
+            , c("N wtd", round(colSums(scs.EVE2$z), 2))
+) %>% 
+  pander("Means and SDs for EVE,2 (no GEO)")
+```
+
+Again Group 2 is generally higher scoring especially in REL, (no real difference for ENG). It's a small group though.
+
+\newpage
+
+#### EVE, 3
+
+The 3 group version of the EVE model is the best of the 3 group versions.
+
+```{r noGeoLPAEVE3, fig.cap = "EVE,3 results when GEO is excluded to increase sample size"}
+scs.EVE3 = Mclust(scsLPA, x=scs.mclust, modelNames="EVE", G=3)
+plot(x=scs.EVE3, what="class", col=classCols)
+```
+
+
+```{r noGeoLPAEVE3tbl}
+merge(round(scs.EVE3$parameters$mean,1)
+      , round(sqrt(apply(scs.EVE3$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")) %>% 
+  select(Test, Group.1, Group.2, Group.3) %>% 
+  rbind(c("N", table(scs.EVE3$classification))
+            , c("N wtd", round(colSums(scs.EVE3$z), 2))
+) %>% 
+  pander("Means and SDs for EVE,3 (no GEO)")
+```
+
+Groups 1 and 3 are mainly just capturing overall skill differences, but Group 2 here (N=18) suggests a small group of students who's REL scores are actually negatively correlated with the other scales.
+
+
+## Final thoughts
+At the risk of making too much out of this one dataset, I wondered if there was something going on with REL here. I did a bit of a deeper dive to see if there was any consistency. There isn't.
+
+While the students had high scores on REL_2, relative to the other selected matrices, this wasn't true across the full set of 15 matrices. Frequently they were not particularly high on the other two REL matrices (so perhaps the specific content was important here), but also they often had even higher scores on one of the matrices in the other topics (though not the specific matrices selected here). I think that pattern was just a spurious result of our particular matrix choices.
+
+\newpage
+
+# Core Subjects: Math, English, Science
+
+Per our discussion, here are the results of analysis considering only the three core school subjects. Since there are now only three topics, I think we can look at what happens when we regress each variable against the other two (interacting), which might provide some interesting insights (with larger variable sets, this quickly becomes too complex).
+
+## Clustering and Profiling
+
+### Factor Analysis
+
+We can't really do FA here, as we do not have enough variables to fit more than one factor.
+
+### PCA
+
+
+```{r coreprincomp}
+coreMatrices = c("ENG_2", "MAT_3", "SCI_2")
+
+princomp(scsWide %>% select(all_of(coreMatrices)) %>% drop_na %>% scale)[c("loadings", "sdev")]
+```
+
+No new insights: still just one general skill component. Although if we do consider Comp 2 (we shouldn't!), then it does load sensibly as Math/Science vs. English.
+
+### Hierarchical Clustering
+
+As discussed, clustering is ... finicky and generally not very robust, nonetheless it might provide some insights that raise questions. Given the results above, though, I am very skeptical that we'll find much of value here.
+
+It's also probably much too complex an approach for only 3 variables. Nonetheless...
+
+#### Selected Matrices Only
+
+
+```{r hclustcore, fig.caption = "Clustering results for only core subject matrices"}
+scs.orig = scsWide %>% 
+    select(all_of(coreMatrices), starts_with("NAPLAN"), starts_with("PAT")
+           , -contains("Band"), -contains("Proficiency")) %>%
+    drop_na(any_of(coreMatrices))
+
+scs.dist = (scs.hclust = scs.orig %>% select(all_of(coreMatrices)) %>% 
+              scale %>% data.frame) %>%  dist
+
+scs.cmplt = hclust(scs.dist)
+
+scs.hclust$hclust.cmplt = cutree(scs.cmplt, 6)
+scs.orig$hclust.cmplt = cutree(scs.cmplt, 6)
+
+plot(scs.cmplt, labels = scs.hclust$hclust.cmplt, cex=.75)
+```
+
+There seem to be perhaps 6 clusters here. Let's look at how they differ:
+
+```{r coreHClustDescriptives}
+
+scs.hclust %>% 
+    rename(Cluster = hclust.cmplt) %>% 
+  group_by(Cluster) %>% 
+  summarize_all(function(x) 
+    paste0(round(mean(x),2)," (",round(sd(x),3),")")) %>% 
+  ungroup %>% 
+  # slice(3,1,2,4,5,6) %>% 
+  pander(alignment = "right", caption = "Mean z-scores (SD) by cluster.")
+
+scs.orig %>% select(all_of(coreMatrices), hclust.cmplt) %>%
+  rename(Cluster = hclust.cmplt) %>% 
+  group_by(Cluster) %>% 
+  summarize_all(function(x) 
+    paste0(round(mean(x, na.rm=T),1)," (",round(sd(x, na.rm=T),2),")")) %>% 
+  ungroup %>% 
+  # slice(3,1,2,4,5,6) %>% 
+  pander(alignment = "right", caption = "Mean and SDs of raw matrix scores by cluster.")
+
+```
+
+```{r coreHClustPlot}
+
+scs.hclust %>% pivot_longer(-hclust.cmplt, names_to="matrix", values_to = "z") %>% 
+  ggplot(aes(x=matrix, y=z))+facet_wrap(vars(hclust.cmplt), ncol=3)+geom_boxplot()
+
+# scs.hclust %>%
+#   mutate(id=row_number()) %>% pivot_longer(ENG_2:SCI_2, names_to="matrix", values_to = "z") %>%
+#   filter(hclust.cmplt %in% c(1:3)) %>%
+#   ggplot(aes(x=matrix, y=z, colour=hclust.cmplt, group=id))+
+#   geom_line()+
+#   scale_color_continuous(guide="none")
+
+```
+
+Cluster 1 (N=151, average), 2 (N=77, above average), 3 (N=10, very very high performers) and 5 (N=34, very low performers) seem to be general skill clusters. Cluster 4 (N=51) seems to be students who are very poor at science, while Cluster 6 (N=24) appear to be students who are strong at Math and Science, but weak at English. Those latter two may be of interest. 
+
+\newpage
+
+##### NAPLAN and PAT
+
+```{r coreNAPLANDescriptives}
+scs.orig %>% select(contains("NAPLAN"), hclust.cmplt) %>%
+  # mutate_at(vars(-hclust.cmplt), scale) %>% 
+  rename_all(function(x) gsub("NAPLAN.", "", x)) %>% 
+  rename(Cluster = hclust.cmplt) %>% 
+  group_by(Cluster) %>% 
+  # summarize_all(function(x) 
+  #   paste0(round(mean(x, na.rm=T),2)," (",round(sd(x, na.rm=T),3),")")
+  # ) %>% 
+  summarize_all(function(x)
+    paste0(round(mean(x, na.rm=T),0)," (",round(sd(x, na.rm=T),1),")")
+  ) %>%
+  ungroup %>% 
+  # slice(3,1,2,4,5,6) %>% 
+  pander(alignment = "right", caption = "Mean and SDs of NAPLAN scores by group.")
+```
+
+In the NAPLAN results, it seems to me that the clusters are simply "skill" clusters, with the general skill level increasing as Cluster 5, 4, 1, 6, 2 and 3.
+
+\newpage
+
+```{r corePATDescriptives}
+scs.orig %>% select(contains("PAT"), hclust.cmplt) %>%
+  # mutate_at(vars(-hclust.cmplt), scale) %>% 
+  rename_all(function(x) gsub("PAT.", "", x)) %>% 
+  rename(Cluster = hclust.cmplt) %>% 
+  group_by(Cluster) %>% 
+  # summarize_all(function(x) 
+  #   paste0(round(mean(x, na.rm=T),2)," (",round(sd(x, na.rm=T),3),")")
+  # ) %>% 
+  summarize_all(function(x)
+    paste0(round(mean(x, na.rm=T),0)," (",round(sd(x, na.rm=T),1),")")
+  ) %>%
+  ungroup %>% 
+  # slice(3,1,2,4,5,6) %>% 
+  pander(alignment = "right", caption = "Mean and SDs of PAT scores by group.")
+
+```
+
+The PAT results are similar although there is really very little separating clusters 2 and 3 (where in the matrices and NAPLAN, cluster 3 is a group of "highly skilled" students). 
+
+Cluster 5 is generally poor but especially at the reading relative to math scores.
+
+Clusters 6 appears to be "average" but higher on reading than math.
+
+\newpage
+
+### Latent Profiles
+
+```{r coreLPA}
+
+scsOrig = scsWide %>% select(all_of(coreMatrices), matches("(NAPLAN|PAT)")
+                             , -matches("(Band|Profic)")) %>% 
+  drop_na(any_of(coreMatrices))
+scsLPA = scsOrig %>% select(all_of(coreMatrices)) %>% drop_na()
+
+scs.mclust = mclustBIC(scsLPA)
+
+```
+
+Just out of curiosity, I will consider the three best models above along with the best "4-class" model (VII, 4; BIC=-7571.508).
+
+#### VEE, 3
+
+This model allows the classes to be of different sizes (in space) but will have identical covariance structures. (They are different sizes, but have the same ratio of variances and point in the same direction.)
+
+The figure below shows how the means and covariance matrices differ by class (depicted by the circles), along with the "most probable" class assigned to each student (colours). The table summarizes means, SDs and group sizes.
+
+```{r coreLPAVEE3, fig.cap = "VEE, 3 results for only core subjects"}
+classCols = rgb(c(1,0,0, .5), c(0,0,1, .5), c(0,1,0, 0), alpha=.25)
+scs.VEE3 = Mclust(scsLPA, x=scs.mclust, modelNames="VEE", G=3)
+plot(x=scs.VEE3, what="class", col=classCols)
+```
+
+
+```{r coreLPAVEE3tbl}
+merge(round(scs.VEE3$parameters$mean,1)
+      , round(sqrt(apply(scs.VEE3$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")) %>% 
+  select(Test, Group.1, Group.2, Group.3) %>% 
+  rbind(c("N", table(scs.VEE3$classification))
+            , c("N wtd", round(colSums(scs.VEE3$z), 2))
+) %>% 
+  pander("Means and SDs for VEE,3 (core subjects only)")
+```
+
+```{r coreScaleLPAVEE3tbl}
+scsScale.mclust = mclustBIC(scsLPA %>% scale)
+scsScale.VEE3 = Mclust(scsLPA %>% scale, x=scsScale.mclust, modelNames="VEE", G=3)
+
+merge(round(scsScale.VEE3$parameters$mean,2)
+      , round(sqrt(apply(scsScale.VEE3$parameters$variance$sigma,3,diag)),3)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")) %>% 
+  select(Test, Group.1, Group.2, Group.3) %>% 
+  rbind(c("N", table(scsScale.VEE3$classification))
+            , c("N wtd", round(colSums(scsScale.VEE3$z), 2))
+) %>% 
+  pander("Means and SDs (z-scores) for VEE,3 (core subjects only)")
+```
+
+These clearly seem to split along skill levels with group 1 (red - below average) < group 2 (blue - average) < group 3 (green - above average).
+
+\newpage
+
+##### NAPLAN and PAT scores
+
+```{r coreVEE3LPANAPLANScores}
+
+
+(scsNAPLAN = 
+  scsOrig %>% mutate(Cluster = scs.VEE3$classification) %>% 
+  select(Cluster, starts_with("NAPLAN")) %>% 
+  rename_all(function(x) gsub("NAPLAN.", "", x)) %>% 
+  # mutate_at(vars(-Cluster), scale) %>% 
+  group_by(Cluster) %>% 
+  summarise_all(list(mean = ~mean(., na.rm=T), sd=~sd(., na.rm=T))) %>% 
+  ungroup() %>% 
+  pivot_longer(all_of(matches("_(mean|sd)"))
+               , names_to = c("Subtest", "Feature")
+               , names_pattern="(.*)_(.*)") %>% 
+  pivot_wider(c(Cluster, Subtest), values_from=value, names_from=Feature)) %>% 
+  mutate(Value = paste0(round(mean,1), " (", round(sd,1), ")")) %>% 
+  select(-mean, -sd) %>% 
+  pivot_wider(Subtest, values_from=Value
+              , names_from=Cluster, names_prefix="Group.") %>% 
+  pander("Means and SDs of NAPLAN scores by LPA Group (VEE, 3)")
+
+
+```
+
+Still showing the same pattern of Group 1 being lower scoring, Group 2 being middle of the range and Group 3 being somewhat higher scoring, but the distinction between groups 2 and 3 is less dramatic than in the original Matrices.
+
+```{r coreVEE3LPANAPLANFigure, fig.cap="Barplot of mean NAPLAN z-scores by Cluster." }
+
+scsNAPLAN = 
+  scsOrig %>% mutate(Cluster = scs.VEE3$classification) %>% 
+  select(Cluster, starts_with("NAPLAN")) %>% 
+  rename_all(function(x) gsub("NAPLAN.", "", x)) %>% 
+  mutate_at(vars(-Cluster), scale) %>%
+  group_by(Cluster) %>% 
+  summarise_all(list(mean = ~mean(., na.rm=T), sd=~sd(., na.rm=T))) %>% 
+  ungroup() %>% 
+  pivot_longer(all_of(matches("_(mean|sd)"))
+               , names_to = c("Subtest", "Feature")
+               , names_pattern="(.*)_(.*)") %>% 
+  pivot_wider(c(Cluster, Subtest), values_from=value, names_from=Feature) %>% 
+  mutate(Subtest = paste0(gsub("[0-9]+.", "", Subtest), " ", substr(Subtest, 1, 4)))
+
+ggplot(scsNAPLAN, aes(Cluster, fill=Subtest, mean))+geom_col(position="dodge")
+```
+
+
+```{r coreVEE3LPAPATScores}
+
+
+# scsPAT = 
+  scsOrig %>% mutate(Cluster = scs.VEE3$classification) %>% 
+  select(Cluster, starts_with("PAT")) %>% 
+  rename_all(function(x) gsub("PAT.", "", x)) %>% 
+  # mutate_at(vars(-Cluster), scale) %>% 
+  group_by(Cluster) %>% 
+  summarise_all(list(mean = ~mean(., na.rm=T), sd=~sd(., na.rm=T))) %>% 
+  ungroup() %>% 
+  pivot_longer(all_of(matches("_(mean|sd)"))
+               , names_to = c("Subtest", "Feature")
+               , names_pattern="(.*)_(.*)") %>% 
+  pivot_wider(c(Cluster, Subtest), values_from=value, names_from=Feature) %>% 
+  mutate(Value = paste0(round(mean,1), " (", round(sd,1), ")")) %>% 
+  select(-mean, -sd) %>% 
+  pivot_wider(Subtest, values_from=Value
+              , names_from=Cluster, names_prefix="Group.") %>% 
+  pander("Means and SDs of PAT scores by LPA Group (VEE, 3)")
+
+
+```
+
+here again we lose the distinction between Groups 2 and 3, or at least they are much less distinct than in the matrices or NAPLAN scores.
+
+\newpage
+
+#### VEE, 2
+
+This is essentially the same model but with only two groups.
+
+```{r coreLPAVEE2, fig.cap = "VEE,2 results for core subjects"}
+scs.VEE2 = Mclust(scsLPA, x=scs.mclust, modelNames="VEE", G=2)
+plot(x=scs.VEE2, what="class", col=classCols)
+```
+
+This is a very odd structure, selecting a subset of the previous extreme groups (1 - red and 3 - green), and merging them as one group (2 - blue), while simultaneously putting all of the original group 2 with the others. No really distinctive groups here, but the SD's in group 2 are relatively high.
+
+This degree of overlap in the distributions means that hte classification will be very "uncertain".
+
+```{r coreLPAVEE2tbl}
+merge(round(scs.VEE2$parameters$mean,1)
+      , round(sqrt(apply(scs.VEE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(scs.VEE2$classification))
+            , c("N wtd", round(colSums(scs.VEE2$z), 2))
+) %>% 
+  pander("Means and SDs for VEE,2 (core subjects only)")
+```
+
+Again Group 2 is generally higher scoring especially in REL, (no real difference for ENG). It's a small group though.
+
+\newpage
+
+#### EVE, 2
+
+In this version, the two groups must have similar "sizes" but can have somewhat different covariance structures.
+
+```{r coreLPAEVE2, fig.cap = "EVE,2 for core subjects"}
+scs.EVE2 = Mclust(scsLPA, x=scs.mclust, modelNames="EVE", G=2)
+plot(x=scs.EVE2, what="class", col=classCols)
+```
+
+This does produce better separation between the two groups. I think it has picked up that there is one group for whom all 3 matrices are well-correlated (r's in the .5 to .7 range), while for one of the groups the ENG and MAT are uncorrelated (r = .063; eng and science: .54; math and sci: .61).
+
+```{r coreLPAEVE2tbl}
+merge(round(scs.EVE2$parameters$mean,1)
+      , round(sqrt(apply(scs.EVE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         # , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(
+    c("N", table(scs.EVE2$classification))
+    , c("N wtd", round(colSums(scs.EVE2$z), 2))
+  )%>% 
+  pander("Means and SDs for EVE,2 (core subjects only)")
+```
+
+
+
+\newpage
+
+#### VII, 4
+
+This model is very restrictive. The groups can vary in size, but they must be "spherical" (within a group, the variance of each variable stays constant), and uncorrelated.
+
+```{r coreLPAVII4, fig.cap = "VII,4 results for core subjects"}
+scs.VII4 = Mclust(scsLPA, x=scs.mclust, modelNames="VII", G=4)
+plot(x=scs.VII4, what="class", col=classCols)
+```
+
+
+```{r coreLPAVII2tbl}
+merge(round(scs.VII4$parameters$mean,1)
+      , round(sqrt(apply(scs.VII4$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         , Group.4 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2, Group.3, Group.4) %>% 
+  rbind(c("N", table(scs.VII4$classification))
+        , c("N wtd", round(colSums(scs.VII4$z), 2))
+  ) %>% 
+  pander("Means and SDs for VII,4 (core subjects)")
+```
+
+Clearly the groups are simply split along a "skill" continuum.
+
+
+### Clustering Thoughts
+
+Generally speaking we only find skill level differences, although Hierarchical Clustering did hint that there might be a group of students who are poor at science and another who are poor at english (relative to their other scores).
+
+\newpage
+
+## Regression approach
+
+Given there are only three variables here, we could look at the general pattern of correlations amongst the interaction models. To do this we fit three regression models and examine there results. Each model uses one variable as the dependent measure, and the uses a fully-interactive model of the two other variables to see if there are predictable patterns. e.g, the model for English would look like:
+
+$$ENG_2 = \beta_0 + \beta_1 \times MAT_3 + \beta_2 \times SCI_2 + \beta_3 \times MAT_3 \times SCI_2 + \epsilon$$
+Main effects of MAT and SCI above would simply indicate a general skill factor, while the interaction term might highlight nuances. Note that I will standardize all scores to account for differences in the number of possible correct responses on each matrix.
+
+### ENG_2
+
+```{r ENGreg}
+scsRegression = scsWide %>% select(all_of(coreMatrices)) %>% scale %>% data.frame
+scs.englm = lm(ENG_2~MAT_3*SCI_2, scsRegression)
+
+summary(scs.englm)
+```
+
+Clearly this suggests nothing more than a general skill, with math and science equally influential on english scores, but no interaction.
+
+\newpage
+
+### MAT_3
+
+```{r MATreg}
+scs.matlm = lm(MAT_3~ENG_2*SCI_2, scsRegression)
+
+summary(scs.matlm)
+```
+
+Here we see an interaction where Math scores are positively associated with English and Science scores, but the relationship weakens as English and Science scores increase.
+
+To get a better sense of what that looks like, Figure 16 below plots 1) the relationship between ENG and MAT, at three different levels of SCI performance (-1 SD from the mean, mean performance, and +1 SD from the mean), and 2) the association between SCI and MAT, and the same three levels of ENG.
+
+```{r plotMATinteraction, fig.cap="Plotting the interaction between English and Science Scores, with Math as the DV"}
+
+grid.arrange(
+  plot_model(scs.matlm, "pred", mdrt.values = "meansd"
+             , terms=c("ENG_2", "SCI_2"))
+  ,   plot_model(scs.matlm, "pred", mdrt.values = "meansd"
+             , terms=rev(c("ENG_2", "SCI_2")))
+)
+
+
+```
+
+\newpage
+
+### SCI_2
+
+```{r SCIreg}
+scs.scilm = lm(SCI_2~ENG_2*MAT_3, scsRegression)
+
+summary(scs.scilm)
+```
+
+Once again we find that Science is associated with both English and Math (the association with Math is somewhat stronger, but not quite significantly stronger), but they do not moderate each other the same way that English and Science did when modelling Math scores.
+
+## Thoughts on the regressions
+
+I think what this suggests is that the correlations between MATH and the other two topics are stronger for "poorer" students than for "better" students.
+
+Not sure what this might mean for profiles.

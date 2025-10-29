@@ -1,0 +1,135 @@
+---
+title: "Internal Reliability of Mazes"
+author: "Serje Robidoux"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = FALSE, fig.height=6, fig.width=6)
+library(ggplot2)
+library(psych)
+library(readxl)
+
+Mazes = list(
+  Math= read_excel("Maths - Maze 3.xlsx", "Sheet1") %>% 
+    select(starts_with("item"))
+  , Sci = read_excel("Science - Maze 2.xlsx", "Sheet1") %>% 
+    select(starts_with("item"))
+  , Eng = read_excel("English - Maze 2.xlsx", "Sheet1") %>% 
+    select(starts_with("item"))
+)
+```
+
+# Intro
+
+We have three Mazes, each with 99 sets of responses. There is very little overlap between the students in each Maze, so cross-Maze reliabilities cannot be estimated (I believe these have already been assessed at the total score level).
+
+Here I assess the internal reliabilities of each Maze (Cronbach's alpha, and McDonald's omega). Data are coded as Correct, Incorrect, or Missing. 
+
+### Missingness
+Because few participants are able to complete all of the items on the Mazes, there is considerable missingness across the dataset. The missingness is decidedly not random, and so imputation isn't an option here. I think there are two options for treating missing values:
+
+1. Missing values are "Incorrect" - simplest
+2. Rescore data as Missing < Incorrect < Correct (treat an attempt as "better" than no attempt). This would capture a sense that students who progress further into the Maze are outperforming other students, even if they are unsuccessful. The catch is this might favor students who simply guess in order to provide more responses.
+
+I will calculate the reliabilities both ways.
+
+## Missing as Incorrect
+
+As a first pass, let's treat missing results as equivalent to errors. I think this is most comparable to the way the Mazes were scored previously (total number of correct responses).
+
+```{r reliabilityBinary, include=FALSE, warning=FALSE, message=FALSE}
+Maze.alpha = lapply(Mazes
+       , function(y) 
+         y %>% mutate(across(everything(), ~replace_na(.x, 0))) %>% alpha
+)
+
+## Omega requires removing items with no variance
+Maze.omega = lapply(Mazes
+       , function(y) 
+         y %>% 
+         mutate(across(everything(), ~replace_na(.x, 0))) %>% 
+         select_if(~var(.x)>0) %>% 
+         omega(nfactors = 5)
+)
+```
+
+
+```{r relTable1, warning=FALSE, message=FALSE}
+merge(
+  lapply(Maze.alpha, function(x) 
+    data.frame(alpha=x$total$raw_alpha#, std=x$total$std.alpha
+               , lCI.a = as.numeric(x$feldt$lower.ci), uCI.a = as.numeric(x$feldt$upper.ci)) %>% 
+      round(3)
+  ) %>% bind_rows(.id="Maze")
+  
+  , lapply(Maze.omega, function(x) data.frame(omega=round(x$omega.tot,3))) %>% bind_rows(.id="Maze")
+  , by="Maze"
+) %>% 
+  mutate(CI = paste0("(", lCI.a, ", ", uCI.a, ")")) %>% 
+  select(Maze, alpha, CI, omega) %>% kable
+
+
+```
+
+With this approach, Cronbach's alphas are extremely high. The low omegas are interesting because they suggest that the Mazes may be modelling more than one factor - in fact looking at the FA analysis used by omega here suggests there are *lots* of factors. (The above omegas are based on a 5 factor model, which the FA suggests is still only capturing 60-70% of the variance)
+
+Something to consider.
+
+## Missing as a distinct outcome
+
+Here I'm going to code missing values as -1, so that on each item, each student receives a score of -1 (missing), 0 (incorrect), or 1 (correct). As previously mentioned, in a sense this gives students credit for attempting an item - the idea is to recognize that some students simply progress further into the Maze than others and that this should (perhaps) indicate better performance.
+
+### Scoring implications
+This approach results in quite a different scoring scheme where students could get a total score of <0, since the Maze Score would be "Total Correct minus Missing Responses" (Incorrect add 0 to the score).
+
+In practice this could be overcome by scoring the Maze as 1 point for each attempted response +1 for each correct response.
+
+```{r reliabilityMissing, include=FALSE, warning=FALSE, message=FALSE}
+# hm, I have an issue where some items are non_numeric, and these won't accept
+# values of -1, but then they should be items with no values anyway so I can
+# just ignore them.
+
+Maze.alpha2 = lapply(Mazes
+       , function(y) 
+         y %>% mutate(across(where(is.numeric), ~replace_na(.x, -1))) %>% alpha
+)
+
+## Omega requires removing items with no variance
+Maze.omega2 = lapply(Mazes
+       , function(y) 
+         y %>% 
+         mutate(across(where(is.numeric), ~replace_na(.x, -1))) %>% 
+         select_if(~var(.x)>0) %>% 
+         omega(nfactors = 5)
+)
+```
+
+
+```{r relTable2, warning=FALSE, message=FALSE}
+merge(
+  lapply(Maze.alpha2, function(x) 
+    data.frame(alpha=x$total$raw_alpha#, std=x$total$std.alpha
+               , lCI.a = as.numeric(x$feldt$lower.ci), uCI.a = as.numeric(x$feldt$upper.ci)) %>% 
+      round(3)
+  ) %>% bind_rows(.id="Maze")
+  
+  , lapply(Maze.omega2, function(x) data.frame(omega_h=round(x$omega_h,3))) %>% bind_rows(.id="Maze")
+  , by="Maze"
+) %>% 
+  select(Maze, alpha, lCI.a, uCI.a, omega_h) %>% kable
+
+
+```
+
+This does slightly improve the reliabilities (although they are already so high...). Note it also exacerbates the issue of multiple factors (see the very low omegas).
+
+Given that it creates a complicated scoring scheme and doesn't provide much benefit to the reliabilities, I'd be inclined to treat Missing as "Incorrect". It also makes the Mazes easier to administer - simply count the number of correct responses.
+
+## No Variance Items
+
+In all three Mazes, there are Items with no variance in the scores - typically because the few students who attempted the item were incorrect (cf. Items 71,73, and 74 in the English Maze where only one student attempted those items without success). In these cases, if missing values are treated as incorrect the item will not be part of the reliability analyses. (If missing is treated as different from an error, they can be used.) In three instances, none of the 99 students attempted the item (Items 69, 70, and 72 of the English Maze).
+
+In order to deal with no variance/no responses items, the only solution is to code more data and hope that a larger sample produces greater variability.

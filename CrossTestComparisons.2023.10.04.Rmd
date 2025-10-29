@@ -1,0 +1,232 @@
+---
+title: "Comparing Course Tests Amongst Each Other"
+author: "Serje Robidoux"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+## Correlations with National Tests
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=6, fig.width=6)
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+library(ggpubr)
+library(psych)
+library(Hmisc)
+library(kableExtra)
+library(pander)
+```
+
+```{r readData}
+# First step is to read in the data
+rawDataFile = 'ACUReadingInitiative.scsRaw.RDat'
+if(file.exists(rawDataFile)) load(rawDataFile) else {
+  scsRaw = read.csv('ACU Reading Initiative - Export - Export (2).csv'
+                    , na.strings = c("Absent ", "absent ", "Absent", "absent"
+                                     , "-", "NULL"))
+  save(scsRaw, file=rawDataFile)
+}
+
+#str(scsRaw)
+#Looks like a lot of the numeric data is being read in as character strings. 
+#Fixed by treating "Absent", "Absent ", "absent", "absent ", "-", and "NULL" as 
+#missing values.
+
+```
+
+```{r renameCols}
+#It looks like Test1 incorrect column has been mislabeled.
+scs = scsRaw %>% rename(Test.1.Num.Incorrect= Test.1.Num.Correct.1)
+```
+
+```{r splitByClass}
+scs = scs %>% #select(-matches("PAT"), -matches("NAPLAN")) %>% 
+  mutate(Course = str_extract(Class, "ENG|SCI|MAT|REL|HIS|GEO")
+         , Course = ifelse(Course=="HIS", "GEO", Course)
+         , Grade = str_split(Class, Course, simplify = T)[1]
+         , Classroom = str_split(Class, Course, simplify = T)[2])
+
+# First, I think we should reorganize the Test data to be long format
+# Splitting both Correct and Incorrect simultaneously was a fun new thing to
+# learn.
+scsLong = scs %>% select(-Class) %>% 
+  pivot_longer(cols = starts_with("Test"), names_to = c("Test", ".value"), names_pattern = "Test\\.(.)\\.Num.(.*)")
+
+# Split data by Class (ENG, MATH, etc...)
+scsClasses = by(scs %>% select(-Course), scs$Course, function(x) x)
+
+# Create a separate data.frame with only PAT and NAPLAN data for each child.
+scsClasses$Assessments = 
+    scsRaw %>% select(SIS.ID, matches("PAT"), matches("NAPLAN")) %>% unique
+#Looks ok to me.
+```
+
+```{r unpivotByClass}
+
+scsWide = scsLong %>%# select(-Class) %>%  
+  pivot_wider(names_from = c("Course", "Test"), values_from=c("Correct", "Incorrect"))
+
+colnames(scsWide)=gsub("Correct_", "", colnames(scsWide))
+colnames(scsWide)=gsub("\\.Score", "", colnames(scsWide))
+colnames(scsWide)=gsub("Grammar\\.and\\.Punctuation", "Grammar", colnames(scsWide))
+
+```
+
+### PAT
+
+```{r corrPAT}
+corTable = rcorr(y= scsWide %>% select(starts_with("PAT.Maths")
+                                   , starts_with("PAT.Reading")
+                                   , -matches("Proficiency|Band")) %>% as.matrix
+    , x=scsWide %>% select(matches("^(ENG|GEO|MAT|REL|SCI)")) %>% as.matrix
+    )
+
+colnames(corTable$r)=gsub("PAT\\.", "", colnames(corTable$r))
+
+paste("Correlations between test scores and PAT scores. Sample sizes vary from"
+      , min(corTable$n[1:15, 16:19]), "to", max(corTable$n[1:15, 16:19])
+      , "meaning that 95% CIs will range from +/-"
+      , round(1.96/sqrt(max(corTable$n[1:15, 16:19])-3),3)
+      , "to +/-"
+      , round(1.96/sqrt(min(corTable$n[1:15, 16:19])-3),3)) %>% 
+  set.caption
+corTable$r[1:15, 13:16+3] %>% 
+  data.frame %>% 
+  rownames_to_column("Test") %>% 
+  pander(digits=3, keep.trailing.zeros=T)
+
+```
+
+Doesn't seem like there's much to see here. All matrices correlate around .3 - .5 with all four PAT tests. SCI_1 generally has low correlation. ENG_1 has generally high correlations.
+
+\newpage
+
+### NAPLAN Numeracy
+
+```{r corrNAPLANNumeracy}
+corTable = rcorr(y= scsWide %>% select(matches("NAPLAN.*Numeracy")
+                                   , -matches("Proficiency|Band")) %>% as.matrix
+    , x=scsWide %>% select(matches("^(ENG|GEO|MAT|REL|SCI)")
+                           , matches("PAT.Maths"), -matches("Proficiency|Band")) %>% as.matrix
+    )
+colnames(corTable$r)=gsub("NAPLAN\\.", "", colnames(corTable$r))
+
+paste("Correlations between test scores and NAPLAN Numeracy. Sample sizes vary from"
+      , min(corTable$n[1:17, 18:19]), "to", max(corTable$n[1:17, 18:19])
+      , "meaning that 95% CIs will range from +/-"
+      , round(1.96/sqrt(max(corTable$n[1:17, 18:19])-3),3)
+      , "to +/-"
+      , round(1.96/sqrt(min(corTable$n[1:17, 18:19])-3),3)) %>% 
+  set.caption
+corTable$r[1:17, 18:19] %>% 
+  data.frame %>% 
+  rownames_to_column("Test") %>% 
+  pander(digits=3, keep.trailing.zeros=T)
+```
+
+Again, nothing very striking although SCI_1 is once again producing lower correlations, while the GEO matrices seem to be quite strongly associated here. NAPLAN and PAT are strongly associated for Maths/Numeracy.
+
+\newpage
+
+### NAPLAN Literacy (Reading and Writing)
+
+```{r corrNAPLANLiteracy}
+corTable = rcorr(y= scsWide %>% select(matches("NAPLAN.*Reading")
+                                   , matches("NAPLAN.*Writing")
+                                   , -matches("Proficiency|Band")) %>% as.matrix
+    , x=scsWide %>% select(matches("^(ENG|GEO|MAT|REL|SCI)")
+                           , matches("PAT.Reading"), -matches("Proficiency|Band")
+                           ) %>% as.matrix
+    )
+colnames(corTable$r)=gsub("NAPLAN\\.", "", colnames(corTable$r))
+paste("Correlations between test scores and NAPLAN Reading and Writing. Sample sizes vary from"
+      , min(corTable$n[1:17, 18:21]), "to", max(corTable$n[1:17, 18:21])
+      , "meaning that 95% CIs will range from +/-"
+      , round(1.96/sqrt(max(corTable$n[1:17, 18:21])-3),3)
+      , "to +/-"
+      , round(1.96/sqrt(min(corTable$n[1:17, 18:21])-3),3)) %>% 
+  set.caption
+corTable$r[1:17, 18:21] %>% 
+  data.frame %>% 
+  rownames_to_column("Test") %>% 
+  pander(digits=3, keep.trailing.zeros=T)
+```
+
+Here again, nothing very dramatic. SCI_1 and REL_3 are a bit weak. GEO_2 and GEO_3 are very strong. The ENG matrices also correlates well here, but nothing correlates particularly badly. PAT and NAPLAN Reading scores are more strongly associated than the matrices, but PAT Reading and NAPLAN Writing, while somewhat stronger overall, are not particularly impressive.
+
+\newpage
+
+## Exploring associations
+
+
+Another way to look at this is to ask whether or not the standardized testing scores load with the matrices in coherent ways, using a factor analysis or principal components.
+
+Preview: this didn't provide any useful insights, but since I did the analyses, I include them here anyway.
+
+### Factor Analysis
+
+```{r exploratoryFA}
+
+scs.efa=factanal(scsWide %>% select(where(is.numeric), -SIS.ID, -contains("Incorrect")) %>% drop_na(), 7)
+
+scs.efa.loadings = scs.efa$loadings[,1:7]
+scs.efa.loadings[scs.efa.loadings<.1]=NA
+colnames(scs.efa.loadings)=paste("F", 1:7)
+scs.efa.loadings %>% 
+  pander(digits=2, keep.trailing.zeroes=T, missing="-")
+```
+#### Factor Descriptions
+
+Not a terribly useful exercise, I'm afraid. Factors one and two seem to be "general ability" factors that differ only in whether they emphasise the matrix tasks, or the standardised tests.
+
+The other factors don't offer much of use.
+
+**Factor 1** (28.1% variance): seems to load the matrices, suggesting that people who are good at matrices tend to do well across the board.
+
+**Factor 2** (19.3%): seems to load mainly the standardized tests.
+
+**F 3** (9.6%): NAPLAN spelling.
+
+**F 4** (9.0%): PAT and NAPLAN reading.
+
+**F 5** (6.7%): ENG matrices
+
+**F 6** (2.0%) & **F 7** (1.9%): Not much of interpretive value going on here. 
+
+### Principal Components Analysis
+
+```{r exploratoryPCA}
+
+scs.pca = princomp(scsWide %>% select(where(is.numeric), -SIS.ID, -contains("Incorrect")) 
+                   %>% drop_na()%>% scale())
+
+scs.pca.loadings = scs.pca$loadings[,1:5]
+scs.pca.loadings[abs(scs.pca.loadings)<.1]=NA
+colnames(scs.pca.loadings)=paste("C", 1:5)
+scs.pca.loadings %>%
+  pander(digits=2, keep.trailing.zeroes=T, missing="-")
+```
+
+Results here are somewhat similar. The first two components code for "general ability" and "Standardised scores vs Matrices" respectively. Only the first four components are more useful than a single variable.
+
+**Component 1** (54.1% variance): general ability on all matrices and standardised tests.
+
+**C 2** (11.3%): relative performance on matrices vs standardised tests.
+
+**C 3** (4.7%): NAPLAN writing and spelling vs the other standardised tests.
+
+**C 4** (3.8%): ENG vs MAT & SCI (a bit weak).
+
+The next components explain less variance than a single variable would.
+
+**C 5** (3.4%): standardised reading vs standardised math.
+
+The other components don't offer much of an intuitive interpretation.
+
+### FA and PCA Conclusion
+
+Nothing to report with regards to how to pick matrices.
