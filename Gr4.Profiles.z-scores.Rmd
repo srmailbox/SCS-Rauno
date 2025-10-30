@@ -1,0 +1,334 @@
+---
+title: "Gr 4 Student Profiles"
+subtitle: "6 Mazes (2 per subject), and TOWRE/TOSREC"
+author: "Serje Robidoux"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=6, fig.width=6, warning = FALSE
+                      , message = FALSE)
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+library(ggpubr)
+library(psych)
+# library(Hmisc)
+library(kableExtra)
+library(pander)
+library(mclust)
+library(sjPlot)
+
+```
+
+```{r readData}
+# First step is to read in the data
+rawDataFile = 'Grade 4_5 screeners MASTER v3.xlsx'
+
+# Grade 4 data
+# Assumed dashes are "missing" and not 0
+
+## Class and student creates a unique id
+gr4dat = readxl::read_xlsx(rawDataFile, sheet="Grade 4 - Import") %>% 
+  mutate(stID = paste0(Class, Student)) %>% 
+  select(-Division, -School, -Grade, -Class, -Student)
+#str(gr4dat)
+# Drop the "excluded" mazes, per Rauno's email
+gr4scs = gr4dat %>% 
+  select(-ELA.Shark, -SS.Alberta, -SC.Recycling)
+
+# gr5dat = readxl::read_xlsx(rawDataFile, sheet="Grade 5 - Import") %>% 
+#   mutate(stID = paste0(Class, Student)) %>% 
+#   select(-Division, -School, -Grade, -Class, -Student)
+# #str(gr5dat)
+# # Drop the "excluded" mazes, per Rauno's email
+# gr5scs = gr5dat %>% 
+#   select(-ELA.Fear, -SS.Debate, -SC.Matter)
+```
+
+# Clustering and Profiling
+
+### Factor Analysis
+
+```{r gr4factor}
+# Take a look at how many factors there might be
+scree(gr4scs %>% select(-stID, -starts_with("T")))
+
+factanal(gr4scs %>% select(-stID, -starts_with("T")) %>% drop_na(), factors=3, rotation="promax")
+
+```
+
+The scree plot suggests just a single factor, but the factor analysis "insists on" 3. However, with 3 factors we just see the most obvious splits with the three maze topics each forming a factor. All three factors are highly correlated, which explains why the scree plot didn't think we needed them all.
+
+### PCA
+
+```{r gr4princomp}
+princomp(gr4scs %>% select(-stID, -starts_with("T")) %>% 
+           drop_na %>% 
+           scale)[c("loadings", "sdev")]
+```
+
+Here again, it looks to me like we really just get a general ability scale.
+
+### Hierarchical Clustering
+
+Clustering is ... finicky and generally not very robust, nonetheless it might provide some insights that raise questions. Given the results above, though, I am very skeptical that we'll find much of value here.
+
+```{r gr4hclust, fig.caption = "Clustering results for only gr4"}
+gr4.dist = (gr4.hclust = gr4scs %>% select(-stID, -starts_with("T")) %>% 
+              drop_na %>% scale %>% data.frame) %>%  dist
+
+gr4.cmplt = hclust(gr4.dist)
+
+# How many trees
+# table(cutree(gr4.cmplt,8))
+gr4.hclust$hclust.cmplt = cutree(gr4.cmplt, 8)
+# gr4.orig$hclust.cmplt = cutree(gr4.cmplt, 6)
+
+plot(gr4.cmplt, labels = gr4.hclust$hclust.cmplt, cex=.75)
+```
+
+There seem to be perhaps 4 sizable clusters, along with several smaller ones. Let's look at how they differ:
+
+```{r gr4HClustDescriptives}
+
+gr4.hclust %>% 
+    rename(Cluster = hclust.cmplt) %>% 
+  group_by(Cluster) %>% 
+  summarize(
+            across(where(is.numeric), ~ paste0(round(mean(.x, na.rm=T),2)," (",round(sd(.x, na.rm=T),3),")")), N=n()) %>% 
+  ungroup %>% 
+  # t() %>% 
+  # slice(3,1,2,4,5,6) %>% 
+  pander(alignment = "right", caption = "Mean z-scores (SD) by cluster.")
+
+# gr4.orig %>% select(all_of(coreMatrices), hclust.cmplt) %>%
+#   rename(Cluster = hclust.cmplt) %>% 
+#   group_by(Cluster) %>% 
+#   summarize_all(function(x) 
+#     paste0(round(mean(x, na.rm=T),1)," (",round(sd(x, na.rm=T),2),")")) %>% 
+#   ungroup %>% 
+#   # slice(3,1,2,4,5,6) %>% 
+#   pander(alignment = "right", caption = "Mean and SDs of raw matrix scores by cluster.")
+
+```
+
+Cluster 1, average-below average.
+Cluster 2, well-above average.
+Cluster 3, average (largest cluster).
+Cluster 4, well below average
+
+Then we get the smaller clusters:
+Cluster 5, very poor at science but average otherwise.
+Cluster 6, very poor at ELA, but average otherwise.
+Cluster 7, very high performing across the board.
+Cluster 8, 2 "hermit" kids who are not similar to anyone, not even each other.
+
+The four main clusters simply fall along a "typical" ability continuum:
+Cluster 2, 3, 1, 4.
+The other four clusters are small groups of anomalous patterns.
+
+```{r gr4HClustPlot}
+gr4.hclust$hclust.cmplt = factor(gr4.hclust$hclust.cmplt, levels=c(2,3,1,4,5:8))
+gr4.hclust %>% 
+  pivot_longer(-hclust.cmplt, names_to="maze", values_to = "z") %>% 
+#  mutate(hclust.cmplt = factor(hclust.cmplt, levels=c(5,2,3,1,4))) %>% 
+  ggplot(aes(x=maze, y=z))+facet_wrap(vars(hclust.cmplt), ncol=4)+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+# gr4.hclust %>%
+#   mutate(id=row_number()) %>% 
+#   pivot_longer(-c(id,hclust.cmplt), names_to="maze", values_to = "z") %>%
+#   ggplot(aes(x=maze, y=z, colour=hclust.cmplt, group=id))+
+#   geom_line()+
+#   scale_color_discrete(guide="none")
+
+```
+
+These boxplots give a clearer picture of the "skill based" clustering results.
+\newpage
+
+### Latent Profiles - Mazes only
+
+
+```{r gr4lpa}
+g4lpa.all = gr4scs %>% drop_na(-stID, -starts_with("T")) 
+gr4lpa = g4lpa.all %>% 
+  select(-stID, -starts_with("T"))
+  
+
+gr4.mclust = mclustBIC(gr4lpa)
+
+gr4.mclust
+
+```
+
+So it looks like LPA prefers the same basic modelling approach, but with either 2, 3, or 4 profiles.
+
+All three models allow the classes to be of different sizes (in terms of the "range of scores that can be considered part of the class"), but will have equivalent covariance structures. All that varies between the models is the number of profiles.
+
+#### VEE, 2
+
+The figure below shows how the means and covariance matrices differ by class (depicted by the circles), along with the "most probable" class assigned to each student (colours). The table summarizes means, SDs and group sizes.
+
+```{r gr4lpaVEE2, fig.cap = "VEE, 2 results for only  subjects"}
+classCols = rgb(c(1,0, .5), c(0,0, .5), c(0,1, .5), alpha=.25)
+gr4.VEE2 = Mclust(gr4lpa
+                  , x=gr4.mclust, modelNames="VEE", G=2)
+plot(x=gr4.VEE2, what="class", col=classCols)
+```
+
+This is largely separating very poor performance from average to good.
+
+```{r gr4lpaVEE2tbl}
+merge(round(gr4.VEE2$parameters$mean,1)
+      , round(sqrt(apply(gr4.VEE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         # , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(gr4.VEE2$classification))
+            , c("N wtd", round(colSums(gr4.VEE2$z), 2))
+) %>% 
+  pander("Means and SDs for VEE,2 (gr4 subjects only)")
+```
+
+```{r gr4ScaleLPAVEE2tbl}
+gr4Scale.mclust = mclustBIC(gr4lpa %>% scale)
+gr4Scale.VEE2 = Mclust(gr4lpa %>% scale, x=gr4Scale.mclust, modelNames="VEE", G=2)
+
+merge(round(gr4Scale.VEE2$parameters$mean,2)
+      , round(sqrt(apply(gr4Scale.VEE2$parameters$variance$sigma,3,diag)),3)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         # , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(gr4Scale.VEE2$classification))
+            , c("N wtd", round(colSums(gr4Scale.VEE2$z), 2))
+) %>% 
+  pander("Means and SDs (z-scores) for VEE,2 (gr4 subjects only)")
+```
+
+These clearly seem to split along skill levels with group 1 (red - below average) < group 2 (blue - average to above average).
+
+\newpage
+
+#### VEE, 3 - "Best" model
+
+The figure below shows how the means and covariance matrices differ by class (depicted by the circles), along with the "most probable" class assigned to each student (colours). The table summarizes means, SDs and group sizes.
+
+```{r gr4lpaVEE3, fig.cap = "VEE, 3 results for only Grade 4"}
+classCols = rgb(c(1,0,0, .5), c(0,1,0, .5), c(0,0,1, .5), alpha=.25)
+gr4.VEE3 = Mclust(gr4lpa
+                  , x=gr4.mclust, modelNames="VEE", G=3)
+plot(x=gr4.VEE3, what="class", col=classCols)
+```
+
+Curiously, this seems to break the "average to good" cluster into a larger one that is is more tightly clustered around the means, and a smaller one that has much wider standard deviations. The "wider" group does have somewhat higher average performances on some scales.
+
+```{r gr4lpaVEE3tbl}
+merge(round(gr4.VEE3$parameters$mean,1)
+      , round(sqrt(apply(gr4.VEE3$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2, Group.3) %>% 
+  rbind(c("N", table(gr4.VEE3$classification))
+            , c("N wtd", round(colSums(gr4.VEE3$z), 2))
+) %>% 
+  pander("Means and SDs for VEE,3 (gr4 subjects only)")
+```
+
+```{r gr4ScaleLPAVEE3tbl}
+gr4Scale.mclust = mclustBIC(gr4lpa %>% scale)
+gr4Scale.VEE3 = Mclust(gr4lpa %>% scale, x=gr4Scale.mclust, modelNames="VEE", G=3)
+
+merge(round(gr4Scale.VEE3$parameters$mean,2)
+      , round(sqrt(apply(gr4Scale.VEE3$parameters$variance$sigma,3,diag)),3)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2, Group.3) %>% 
+  rbind(c("N", table(gr4Scale.VEE3$classification))
+            , c("N wtd", round(colSums(gr4Scale.VEE3$z), 2))
+) %>% 
+  pander("Means and SDs (z-scores) for VEE,3 (gr4 subjects only)")
+```
+
+In the z-scored version, we do see that the "split" is not just in the variances which get larger, but also in somewhat better scores on ELA and Social Science mazes.
+
+\newpage
+
+#### VEE, 4
+
+The figure below shows how the means and covariance matrices differ by class (depicted by the circles), along with the "most probable" class assigned to each student (colours). The table summarizes means, SDs and group sizes.
+
+```{r gr4lpaVEE4, fig.cap = "VEE, 4 results for only Grade 4"}
+classCols = rgb(c(1,0,0,0), c(0,1,.5,0), c(0,0,.5,1), alpha=.25)
+gr4.VEE4 = Mclust(gr4lpa
+                  , x=gr4.mclust, modelNames="VEE", G=4)
+plot(x=gr4.VEE4, what="class", col=classCols)
+```
+
+This adds a cluster of high performers.
+
+```{r gr4lpaVEE4tbl}
+merge(round(gr4.VEE4$parameters$mean,1)
+      , round(sqrt(apply(gr4.VEE4$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         , Group.4 = paste0(V4.mean, " (", V4.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2, Group.3, Group.4) %>% 
+  rbind(c("N", table(gr4.VEE4$classification))
+            , c("N wtd", round(colSums(gr4.VEE4$z), 2))
+) %>% 
+  pander("Means and SDs for VEE,4 (gr4 subjects only)")
+```
+Group 2 here are the high performers.
+
+```{r gr4ScaleLPAVEE4tbl}
+gr4Scale.mclust = mclustBIC(gr4lpa %>% scale)
+gr4Scale.VEE4 = Mclust(gr4lpa %>% scale, x=gr4Scale.mclust, modelNames="VEE", G=4)
+
+merge(round(gr4Scale.VEE4$parameters$mean,2)
+      , round(sqrt(apply(gr4Scale.VEE4$parameters$variance$sigma,3,diag)),3)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         , Group.4 = paste0(V4.mean, " (", V4.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2, Group.3, Group.4) %>% 
+  rbind(c("N", table(gr4Scale.VEE4$classification))
+            , c("N wtd", round(colSums(gr4Scale.VEE4$z), 2))
+) %>% 
+  pander("Means and SDs (z-scores) for VEE,4 (gr4 subjects only)")
+```
+
+\newpage

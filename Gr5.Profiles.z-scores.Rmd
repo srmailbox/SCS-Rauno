@@ -1,0 +1,279 @@
+---
+title: "Gr 5 Student Profiles"
+subtitle: "6 Mazes (2 per subject), and TOWRE/TOSREC"
+author: "Serje Robidoux"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=6, fig.width=6, warning = FALSE
+                      , message = FALSE)
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+library(ggpubr)
+library(psych)
+# library(Hmisc)
+library(kableExtra)
+library(pander)
+library(mclust)
+library(sjPlot)
+
+```
+
+```{r readData}
+# First step is to read in the data
+rawDataFile = 'Grade 4_5 screeners MASTER v3.xlsx'
+
+# Grade 5 data
+# Assumed dashes are "missing" and not 0
+
+## Class and student creates a unique id
+gr5dat = readxl::read_xlsx(rawDataFile, sheet="Grade 5 - Import") %>% 
+  mutate(stID = paste0(Class, Student)) %>% 
+  select(-Division, -School, -Grade, -Class, -Student)
+#str(gr5dat)
+# Drop the "excluded" mazes, per Rauno's email
+gr5scs = gr5dat %>% 
+  select(-ELA.Fear, -SS.Debate, -SC.Matter)
+
+# gr5dat = readxl::read_xlsx(rawDataFile, sheet="Grade 5 - Import") %>% 
+#   mutate(stID = paste0(Class, Student)) %>% 
+#   select(-Division, -School, -Grade, -Class, -Student)
+# #str(gr5dat)
+# # Drop the "excluded" mazes, per Rauno's email
+# gr5scs = gr5dat %>% 
+#   select(-ELA.Fear, -SS.Debate, -SC.Matter)
+```
+
+# Clustering and Profiling
+
+### Factor Analysis
+
+```{r gr5factor}
+# Take a look at how many factors there might be
+scree(gr5scs %>% select(-stID, -starts_with("T")))
+
+factanal(gr5scs %>% select(-stID, -starts_with("T")) %>% drop_na(), factors=3, rotation="promax")
+
+```
+
+The scree plot suggests just a single factor, but the factor analysis "insists on" 3. However, with 3 factors we just see the most obvious splits with the three maze topics each forming a factor. All three factors are highly correlated, which explains why the scree plot didn't think we needed them all.
+
+### PCA
+
+```{r gr5princomp}
+princomp(gr5scs %>% select(-stID, -starts_with("T")) %>% 
+           drop_na %>% 
+           scale)[c("loadings", "sdev")]
+```
+
+Here again, it looks to me like we really just get a general ability scale.
+
+### Hierarchical Clustering
+
+Clustering is ... finicky and generally not very robust, nonetheless it might provide some insights that raise questions. Given the results above, though, I am very skeptical that we'll find much of value here.
+
+```{r gr5hclust, fig.caption = "Clustering results for only gr5"}
+gr5.dist = (gr5.hclust = gr5scs %>% select(-stID, -starts_with("T")) %>% 
+              drop_na %>% scale %>% data.frame) %>%  dist
+
+gr5.cmplt = hclust(gr5.dist)
+
+# How many trees
+# table(cutree(gr5.cmplt,9))
+gr5.hclust$hclust.cmplt = cutree(gr5.cmplt, 9)
+# gr5.orig$hclust.cmplt = cutree(gr5.cmplt, 6)
+
+plot(gr5.cmplt, labels = gr5.hclust$hclust.cmplt, cex=.75)
+```
+
+There seem to be 9 sizable clusters, along with several smaller ones. Let's look at how they differ:
+
+```{r gr5HClustDescriptives}
+
+gr5.hclust %>% 
+    rename(Cluster = hclust.cmplt) %>% 
+  group_by(Cluster) %>% 
+  summarize(
+            across(where(is.numeric), ~ paste0(round(mean(.x, na.rm=T),2)," (",round(sd(.x, na.rm=T),3),")")), N=n()) %>% 
+  ungroup %>% 
+  # t() %>% 
+  # slice(3,1,2,4,5,6) %>% 
+  pander(alignment = "right", caption = "Mean z-scores (SD) by cluster.")
+
+# gr5.orig %>% select(all_of(coreMatrices), hclust.cmplt) %>%
+#   rename(Cluster = hclust.cmplt) %>% 
+#   group_by(Cluster) %>% 
+#   summarize_all(function(x) 
+#     paste0(round(mean(x, na.rm=T),1)," (",round(sd(x, na.rm=T),2),")")) %>% 
+#   ungroup %>% 
+#   # slice(3,1,2,4,5,6) %>% 
+#   pander(alignment = "right", caption = "Mean and SDs of raw matrix scores by cluster.")
+
+```
+
+Cluster 1, below average, particular on Social Science and Science.
+Cluster 2, slightly below average.
+Cluster 3, slightly above average (C2 and C3 are probably the "typical" kids).
+Cluster 4, well below average, particular on ELA.
+Cluster 5, small sample of very poor performers.
+Cluster 6, somewhat above average - don't seem that diff from C3.
+Cluster 7, below average on ELA and Soc. Sc.
+Cluster 8, solidly above average.
+Cluster 9, well above average.
+
+Seems like there's something along the lines of an ordering for:
+Cluster 9, 8, 6, 3, 2, 5
+
+With the other clusters showing varied performance depending on the subject matter:
+Cluster 1, 7, 4
+
+```{r gr5HClustPlot}
+gr5.hclust$hclust.cmplt = factor(gr5.hclust$hclust.cmplt, levels=c(9,8,6,3,2,5,1,7,4))
+gr5.hclust %>% 
+  pivot_longer(-hclust.cmplt, names_to="maze", values_to = "z") %>% 
+#  mutate(hclust.cmplt = factor(hclust.cmplt, levels=c(5,2,3,1,4))) %>% 
+  ggplot(aes(x=maze, y=z))+facet_wrap(vars(hclust.cmplt), ncol=5)+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+# gr5.hclust %>%
+#   mutate(id=row_number()) %>% 
+#   pivot_longer(-c(id,hclust.cmplt), names_to="maze", values_to = "z") %>%
+#   ggplot(aes(x=maze, y=z, colour=hclust.cmplt, group=id))+
+#   geom_line()+
+#   scale_color_discrete(guide="none")
+
+```
+
+I may well be imposing too much of my expectations on these. Only C8, C2, and C5 really seem to be "flat" with just variance in overall ability. Perhaps 6and 1.
+\newpage
+
+### Latent Profiles - Mazes only
+
+
+```{r gr5lpa}
+g4lpa.all = gr5scs %>% drop_na(-stID, -starts_with("T")) 
+gr5lpa = g4lpa.all %>% 
+  select(-stID, -starts_with("T"))
+  
+
+gr5.mclust = mclustBIC(gr5lpa, G=2:9)
+
+gr5.mclust
+
+```
+
+This is an unusual situation. The EEE through VVV models all prefer a single cluster with identical BIC. After that VEE2 is clearly preferred (2 profiles).
+If we assume at least 2 clusters, then we get VEE2 and maybe EEE2. I doubt they differ much. Let's take a look.
+
+#### VEE, 2
+
+The figure below shows how the means and covariance matrices differ by class (depicted by the circles), along with the "most probable" class assigned to each student (colours). The table summarizes means, SDs and group sizes.
+
+```{r gr5lpaVEE2, fig.cap = "VEE, 2 results for only  subjects"}
+classCols = rgb(c(1,0, .5), c(0,0, .5), c(0,1, .5), alpha=.25)
+gr5.VEE2 = Mclust(gr5lpa
+                  , x=gr5.mclust, modelNames="VEE", G=2)
+plot(x=gr5.VEE2, what="class", col=classCols)
+```
+
+Pretty clearly delineating on skill, particularly for ELA mazes.
+
+```{r gr5lpaVEE2tbl}
+merge(round(gr5.VEE2$parameters$mean,1)
+      , round(sqrt(apply(gr5.VEE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         # , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(gr5.VEE2$classification))
+            , c("N wtd", round(colSums(gr5.VEE2$z), 2))
+) %>% 
+  pander("Means and SDs for VEE,2 (gr5 subjects only)")
+```
+
+```{r gr5ScaleLPAVEE2tbl}
+gr5Scale.mclust = mclustBIC(gr5lpa %>% scale)
+gr5Scale.VEE2 = Mclust(gr5lpa %>% scale, x=gr5Scale.mclust, modelNames="VEE", G=2)
+
+merge(round(gr5Scale.VEE2$parameters$mean,2)
+      , round(sqrt(apply(gr5Scale.VEE2$parameters$variance$sigma,3,diag)),3)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         # , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(gr5Scale.VEE2$classification))
+            , c("N wtd", round(colSums(gr5Scale.VEE2$z), 2))
+) %>% 
+  pander("Means and SDs (z-scores) for VEE,2 (gr5 subjects only)")
+```
+
+This seems to pick G2 as overall better than G1, but particularly on Kananaskis, and Earth.
+
+\newpage
+
+#### EEE, 2
+
+For this model, the groups must have similar "sizes" in terms of the score space.
+
+```{r gr5lpaEEE2, fig.cap = "EEE, 2 results for only Grade 5"}
+classCols = rgb(c(1,0, .5), c(0,0, .5), c(0,1, .5), alpha=.25)
+gr5.EEE2 = Mclust(gr5lpa
+                  , x=gr5.mclust, modelNames="EEE", G=2)
+plot(x=gr5.EEE2, what="class", col=classCols)
+```
+
+Seems to be showing a bit of different separations. Not just for ELA now, but also Earth.
+
+```{r gr5lpaEEE2tbl}
+merge(round(gr5.EEE2$parameters$mean,1)
+      , round(sqrt(apply(gr5.EEE2$parameters$variance$sigma,3,diag)),1)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         # , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(gr5.EEE2$classification))
+            , c("N wtd", round(colSums(gr5.EEE2$z), 2))
+) %>% 
+  pander("Means and SDs for EEE,2 (gr5 subjects only)")
+```
+
+This is a mixed bag. 
+
+```{r gr5ScaleLPAEEE2tbl}
+gr5Scale.mclust = mclustBIC(gr5lpa %>% scale)
+gr5Scale.EEE2 = Mclust(gr5lpa %>% scale, x=gr5Scale.mclust, modelNames="EEE", G=2)
+
+merge(round(gr5Scale.EEE2$parameters$mean,2)
+      , round(sqrt(apply(gr5Scale.EEE2$parameters$variance$sigma,3,diag)),3)
+      , by="row.names"
+      , suffixes=c(".mean", ".sd")) %>% 
+  mutate(Test = Row.names
+         , Group.1 = paste0(V1.mean, " (", V1.sd, ")")
+         , Group.2 = paste0(V2.mean, " (", V2.sd, ")")
+         # , Group.3 = paste0(V3.mean, " (", V3.sd, ")")
+         ) %>% 
+  select(Test, Group.1, Group.2) %>% 
+  rbind(c("N", table(gr5Scale.EEE2$classification))
+            , c("N wtd", round(colSums(gr5Scale.EEE2$z), 2))
+) %>% 
+  pander("Means and SDs (z-scores) for EEE,2 (gr5 subjects only)")
+```
+
+Here again, the split here is that G2 is better overall, but particularly for Kananaskis and Earth.
