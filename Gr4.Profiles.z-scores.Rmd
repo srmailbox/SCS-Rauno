@@ -70,7 +70,7 @@ princomp(gr4scs %>% select(-stID, -starts_with("T")) %>%
            scale)[c("loadings", "sdev")]
 ```
 
-Here again, it looks to me like we really just get a general ability scale.
+Here again, it looks to me like we really just get a single useful component: a general ability scale.
 
 ### Hierarchical Clustering
 
@@ -90,6 +90,7 @@ gr4.hclust$hclust.cmplt = cutree(gr4.cmplt, 8)
 plot(gr4.cmplt, labels = gr4.hclust$hclust.cmplt, cex=.75)
 ```
 
+\newpage
 There seem to be perhaps 4 sizable clusters, along with several smaller ones. Let's look at how they differ:
 
 ```{r gr4HClustDescriptives}
@@ -115,27 +116,33 @@ gr4.hclust %>%
 
 ```
 
-Cluster 1, average-below average.
-Cluster 2, well-above average.
-Cluster 3, average (largest cluster).
-Cluster 4, well below average
+* Cluster 1, average-below average.
+* Cluster 2, well-above average.
+* Cluster 3, average (largest cluster).
+* Cluster 4, well below average
+* Cluster 7, very high performing (but a small group).
 
-Then we get the smaller clusters:
-Cluster 5, very poor at science but average otherwise.
-Cluster 6, very poor at ELA, but average otherwise.
-Cluster 7, very high performing across the board.
-Cluster 8, 2 "hermit" kids who are not similar to anyone, not even each other.
+Then we get the smaller clusters that are more varied by topic:
+
+* Cluster 5, very poor at science but average otherwise.
+* Cluster 6, very poor at ELA, but average otherwise.
+* Cluster 8, 2 "hermit" kids who are not similar to anyone, not even each other.
 
 The four main clusters simply fall along a "typical" ability continuum:
-Cluster 2, 3, 1, 4.
-The other four clusters are small groups of anomalous patterns.
+Cluster 2, 3, 1, 4, along with Cluster 7 as "very high" performers.
+
+The other three clusters are small groups of anomalous patterns.
+
+\newpage
+
+These boxplots give a clearer picture of the "skill based" clustering results.
 
 ```{r gr4HClustPlot}
-gr4.hclust$hclust.cmplt = factor(gr4.hclust$hclust.cmplt, levels=c(2,3,1,4,5:8))
+gr4.hclust$hclust.cmplt = factor(gr4.hclust$hclust.cmplt, levels=c(7,2,3,1,4,5,6,8))
 gr4.hclust %>% 
   pivot_longer(-hclust.cmplt, names_to="maze", values_to = "z") %>% 
 #  mutate(hclust.cmplt = factor(hclust.cmplt, levels=c(5,2,3,1,4))) %>% 
-  ggplot(aes(x=maze, y=z))+facet_wrap(vars(hclust.cmplt), ncol=4)+
+  ggplot(aes(x=maze, y=z))+facet_wrap(vars(hclust.cmplt), ncol=5)+
   geom_boxplot()+
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
@@ -148,7 +155,8 @@ gr4.hclust %>%
 
 ```
 
-These boxplots give a clearer picture of the "skill based" clustering results.
+The top row are the clusters that seem to be almost entirely just general skill, while the bottom row depicts smaller clusters with more variability across topics. Cluster 7 is a very high performing group, but a relatively small number of kids (9)
+
 \newpage
 
 ### Latent Profiles - Mazes only
@@ -166,9 +174,7 @@ gr4.mclust
 
 ```
 
-So it looks like LPA prefers the same basic modelling approach, but with either 2, 3, or 4 profiles.
-
-All three models allow the classes to be of different sizes (in terms of the "range of scores that can be considered part of the class"), but will have equivalent covariance structures. All that varies between the models is the number of profiles.
+All three preferred models allow the classes to be of different sizes (in terms of the "range of scores that can be considered part of the class"), but will have equivalent covariance structures. All that varies between the models is the number of profiles.
 
 #### VEE, 2
 
@@ -220,7 +226,7 @@ merge(round(gr4Scale.VEE2$parameters$mean,2)
   pander("Means and SDs (z-scores) for VEE,2 (gr4 subjects only)")
 ```
 
-These clearly seem to split along skill levels with group 1 (red - below average) < group 2 (blue - average to above average).
+These clearly seem to split along skill levels with group 1 (red - average to below average) < group 2 (blue - above average).
 
 \newpage
 
@@ -235,7 +241,7 @@ gr4.VEE3 = Mclust(gr4lpa
 plot(x=gr4.VEE3, what="class", col=classCols)
 ```
 
-Curiously, this seems to break the "average to good" cluster into a larger one that is is more tightly clustered around the means, and a smaller one that has much wider standard deviations. The "wider" group does have somewhat higher average performances on some scales.
+Curiously, this seems to break the "above average" cluster into a larger one that is is more tightly clustered around the means, and a smaller one that has wider standard deviations. The "wider" group (Group 2 in Tables 5 and 6) does have somewhat higher average performances on some scales.
 
 ```{r gr4lpaVEE3tbl}
 merge(round(gr4.VEE3$parameters$mean,1)
@@ -289,7 +295,8 @@ gr4.VEE4 = Mclust(gr4lpa
 plot(x=gr4.VEE4, what="class", col=classCols)
 ```
 
-This adds a cluster of high performers.
+\newpage
+This adds a cluster of high performers (Group 2 here).
 
 ```{r gr4lpaVEE4tbl}
 merge(round(gr4.VEE4$parameters$mean,1)
@@ -308,7 +315,6 @@ merge(round(gr4.VEE4$parameters$mean,1)
 ) %>% 
   pander("Means and SDs for VEE,4 (gr4 subjects only)")
 ```
-Group 2 here are the high performers.
 
 ```{r gr4ScaleLPAVEE4tbl}
 gr4Scale.mclust = mclustBIC(gr4lpa %>% scale)
@@ -330,5 +336,9 @@ merge(round(gr4Scale.VEE4$parameters$mean,2)
 ) %>% 
   pander("Means and SDs (z-scores) for VEE,4 (gr4 subjects only)")
 ```
+
+## LPA Conclusions
+
+It looks to me like there are 3 groups - one low performing, one high performing and one "average to above average". The LPA does split the "average+" group by topics, but not in a way that feels particularly sensible or informative. I wonder if it's just something about the specific topics that creates that divide?
 
 \newpage

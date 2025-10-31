@@ -90,7 +90,7 @@ gr5.hclust$hclust.cmplt = cutree(gr5.cmplt, 9)
 plot(gr5.cmplt, labels = gr5.hclust$hclust.cmplt, cex=.75)
 ```
 
-There seem to be 9 sizable clusters, along with several smaller ones. Let's look at how they differ:
+There seem to be a lot of clusters here, ranging in size from 11 to 63:
 
 ```{r gr5HClustDescriptives}
 
@@ -115,15 +115,15 @@ gr5.hclust %>%
 
 ```
 
-Cluster 1, below average, particular on Social Science and Science.
-Cluster 2, slightly below average.
-Cluster 3, slightly above average (C2 and C3 are probably the "typical" kids).
-Cluster 4, well below average, particular on ELA.
-Cluster 5, small sample of very poor performers.
-Cluster 6, somewhat above average - don't seem that diff from C3.
-Cluster 7, below average on ELA and Soc. Sc.
-Cluster 8, solidly above average.
-Cluster 9, well above average.
+* Cluster 1, below average, particular on Social Science and Science.
+* Cluster 2, slightly below average.
+* Cluster 3, slightly above average (C2 and C3 are probably the "typical" kids).
+* Cluster 4, well below average, particular on ELA.
+* Cluster 5, small sample of very poor performers.
+* Cluster 6, somewhat above average - don't seem that diff from C3.
+* Cluster 7, below average on ELA and Soc. Sc.
+* Cluster 8, solidly above average.
+* Cluster 9, well above average.
 
 Seems like there's something along the lines of an ordering for:
 Cluster 9, 8, 6, 3, 2, 5
@@ -149,7 +149,8 @@ gr5.hclust %>%
 
 ```
 
-I may well be imposing too much of my expectations on these. Only C8, C2, and C5 really seem to be "flat" with just variance in overall ability. Perhaps 6and 1.
+I may well be imposing too much of my expectations on these. Only C8, C2, and C5 really seem to be "flat" with just variance in overall ability. Perhaps 6 and 1?
+
 \newpage
 
 ### Latent Profiles - Mazes only
@@ -168,6 +169,7 @@ gr5.mclust
 ```
 
 This is an unusual situation. The EEE through VVV models all prefer a single cluster with identical BIC. After that VEE2 is clearly preferred (2 profiles).
+
 If we assume at least 2 clusters, then we get VEE2 and maybe EEE2. I doubt they differ much. Let's take a look.
 
 #### VEE, 2
@@ -220,13 +222,13 @@ merge(round(gr5Scale.VEE2$parameters$mean,2)
   pander("Means and SDs (z-scores) for VEE,2 (gr5 subjects only)")
 ```
 
-This seems to pick G2 as overall better than G1, but particularly on Kananaskis, and Earth.
+This seems to pick G2 as overall better than G1, but particularly on Kananaskis, Serge, and Earth.
 
 \newpage
 
 #### EEE, 2
 
-For this model, the groups must have similar "sizes" in terms of the score space.
+In the previous model, the size of the "ovals" could vary so that each profile might occupy more or less of the overall space. In this version, they have to split the space roughly equally (Note: this doesn't refer to the sample, but the score space).
 
 ```{r gr5lpaEEE2, fig.cap = "EEE, 2 results for only Grade 5"}
 classCols = rgb(c(1,0, .5), c(0,0, .5), c(0,1, .5), alpha=.25)
@@ -235,7 +237,7 @@ gr5.EEE2 = Mclust(gr5lpa
 plot(x=gr5.EEE2, what="class", col=classCols)
 ```
 
-Seems to be showing a bit of different separations. Not just for ELA now, but also Earth.
+Seems very similar - overall differences in skill, but particularly on Kananaskis and Earth.
 
 ```{r gr5lpaEEE2tbl}
 merge(round(gr5.EEE2$parameters$mean,1)
@@ -254,7 +256,6 @@ merge(round(gr5.EEE2$parameters$mean,1)
   pander("Means and SDs for EEE,2 (gr5 subjects only)")
 ```
 
-This is a mixed bag. 
 
 ```{r gr5ScaleLPAEEE2tbl}
 gr5Scale.mclust = mclustBIC(gr5lpa %>% scale)
@@ -277,3 +278,7 @@ merge(round(gr5Scale.EEE2$parameters$mean,2)
 ```
 
 Here again, the split here is that G2 is better overall, but particularly for Kananaskis and Earth.
+
+## LPA Conclusion
+
+I'd say that there is less clarity in the grade 5 profiles. Once again we get skill-based profiles, but there seem to just be "high scores" vs "average to low scores". It also seems that Kananaskis and Earth are the most discriminating here.
