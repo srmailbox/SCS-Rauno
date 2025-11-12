@@ -1,0 +1,195 @@
+---
+title: "Internal Reliability of Gr 4 & 5 Mazes"
+author: "Serje Robidoux"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = FALSE, fig.height=6, fig.width=6)
+library(ggplot2)
+library(psych)
+library(readxl)
+
+Gr4Master = read_excel("Grade 4_5 screeners Fully Itemized Master.xlsx"
+                       , sheet = "Grade 4", skip=2) %>% 
+  rename(Division = `...1`, School = `...2`, Student = `...3`)
+
+Gr4Data = list(
+  ELA.Edna =  Gr4Master %>% select(1:3,5:57)
+  , ELA.Shark = Gr4Master %>% select(1:3,59:110)
+  , ELA.Sketchbook = Gr4Master %>% select(1:3,112:171)
+  , SCI.Magnets = Gr4Master %>% select(1:3,173:240)
+  , SCI.Recycling = Gr4Master %>% select(1:3,242:296)
+  , SCI.Sun = Gr4Master %>% select(1:3,298:359)
+  , SSC.Alberta = Gr4Master %>% select(1:3,361:427)
+  , SSC.Library = Gr4Master %>% select(1:3,429:494)
+  , SSC.MurkyPond = Gr4Master %>% select(1:3,496:550)
+)
+
+Gr5Master = read_excel("Grade 4_5 screeners Fully Itemized Master.xlsx"
+                       , sheet = "Grade 5", skip=2) %>% 
+  rename(Division = `...1`, School = `...2`, Student = `...3`)
+
+Gr5Data = list(
+  ELA.Serge =  Gr5Master %>% select(1:3,5:69)
+  , ELA.Kananaskis = Gr5Master %>% select(1:3,71:131)
+  , ELA.Fear = Gr5Master %>% select(1:3,133:200)
+  , SSC.Debate = Gr5Master %>% select(1:3,202:267)
+  , SSC.Food = Gr5Master %>% select(1:3,269:339)
+  , SSC.Canada = Gr5Master %>% select(1:3,341:404)
+  , SCI.Weather = Gr5Master %>% select(1:3,406:471)
+  , SCI.Matter = Gr5Master %>% select(1:3,473:538)
+  , SCI.Earth = Gr5Master %>% select(1:3,540:600)
+)
+```
+
+# Intro
+
+An analysis of Cronbach's alpha and McDonald's omega for Mazes developed for Grade 4 and 5 students in Alberta. The analysis will ignore the last items of each Maze where no one was able to provide an accurate response on the assumption that there is no data there.
+
+Note that since those items have no variability, they are ignored by Cronbach's alpha in any case (as are any items that are correctly answered by all participants).
+
+### Missingness
+The Master datafiles provided contain no missing data, so I assume missing responses are treated as incorrect.
+
+## Grade 4 Mazes
+
+```{r gr4ReliabilityBinary, include=FALSE, warning=FALSE, message=FALSE}
+Gr4.cors = lapply(Gr4Data, function(x) cor(x[,-(1:3)], use="pairwise.complete"))
+
+Gr4.alpha = lapply(Gr4Data
+       , function(y) 
+         y %>% 
+         select(-Division, -School, -Student) %>% 
+         # mutate(across(everything(), ~replace_na(.x, 0))) %>% 
+         alpha
+)
+
+## Omega requires removing items with no variance
+Gr4.omega = lapply(Gr4Data
+       , function(y) 
+         y %>% 
+         # mutate(across(everything(), ~replace_na(.x, 0))) %>% 
+         select_if(~var(.x)>0) %>% 
+         omega(fm="pc", nfactors=3)
+)
+```
+
+
+```{r gr4RelTable1, warning=FALSE, message=FALSE}
+merge(
+  lapply(Gr4.alpha, function(x) 
+    data.frame(alpha=x$total$raw_alpha#, std=x$total$std.alpha
+               , lCI.a = as.numeric(x$feldt$lower.ci), uCI.a = as.numeric(x$feldt$upper.ci)) %>% 
+      round(3)
+  ) %>% bind_rows(.id="Maze")
+  
+  , lapply(Gr4.omega, function(x) data.frame(omega=round(x$omega.tot,3))) %>% bind_rows(.id="Maze")
+  , by="Maze"
+) %>% 
+  mutate(CI = paste0("(", lCI.a, ", ", uCI.a, ")")) %>% 
+  select(Maze, alpha, CI, omega) %>% kable
+
+
+```
+
+For these data, both Cronbach's alpha and McDonald's Omega (total) are very high. This suggests the Mazes work quite well as measures.
+
+However, not all of the Mazes appear to be unidimensional. In the table below, the omega total score is decomposed into reliability coming from a single "general" factor (omega_h),  a set of factors (omega_grp) and then some other "random error". A good unidimensional test has mostly "general" reliability, and relatively little "group" reliability.
+
+
+```{r gr4RelTable2}
+
+merge(
+  lapply(Gr4.omega
+         , function(x) data.frame(x$omega.group["g",], row.names = NULL) 
+         %>% round(3)
+  ) %>% 
+    bind_rows(.id="Maze")
+  , lapply(Gr4.alpha
+           , function(x) data.frame(alpha = x$total$raw_alpha, row.names = NULL) 
+           %>% round(3)
+  ) %>% 
+    bind_rows(.id="Maze")
+  , by = "Maze"
+  )%>% 
+  rename(omega_tot = total, omega_h = general, omega_grp = group) %>% 
+  kable
+```
+
+From this table we can see that while the reliabilities are all very strong, some of the Mazes may reflect more complex structure. (All of the above are based on assuming there might be 3 factors for each Maze.) In particular Science - Sun suggests that the multi-factor version is more explanatory than the single general factor, and ELA - Shark and SSC - Alberta are not particularly strongly unidimensional.
+
+## Grade 5 Mazes
+
+```{r Gr5ReliabilityBinary, include=FALSE, warning=FALSE, message=FALSE}
+Gr5.cors = lapply(Gr5Data, function(x) cor(x[,-(1:3)], use="pairwise.complete"))
+
+Gr5.alpha = lapply(Gr5Data
+       , function(y) 
+         y %>% 
+         select(-Division, -School, -Student) %>% 
+         # mutate(across(everything(), ~replace_na(.x, 0))) %>% 
+         alpha
+)
+
+## Omega requires removing items with no variance
+Gr5.omega = lapply(Gr5Data
+       , function(y) 
+         y %>% 
+         # mutate(across(everything(), ~replace_na(.x, 0))) %>% 
+         select_if(~var(.x)>0) %>% 
+         omega(fm="pc", nfactors=3)
+)
+```
+
+
+```{r Gr5RelTable1, warning=FALSE, message=FALSE}
+merge(
+  lapply(Gr5.alpha, function(x) 
+    data.frame(alpha=x$total$raw_alpha#, std=x$total$std.alpha
+               , lCI.a = as.numeric(x$feldt$lower.ci), uCI.a = as.numeric(x$feldt$upper.ci)) %>% 
+      round(3)
+  ) %>% bind_rows(.id="Maze")
+  
+  , lapply(Gr5.omega, function(x) data.frame(omega=round(x$omega.tot,3))) %>% bind_rows(.id="Maze")
+  , by="Maze"
+) %>% 
+  mutate(CI = paste0("(", lCI.a, ", ", uCI.a, ")")) %>% 
+  select(Maze, alpha, CI, omega) %>% kable
+
+
+```
+
+For these data, both Cronbach's alpha and McDonald's Omega (total) are very high. This suggests the Mazes work quite well as measures. Social Science - Debate might be a bit weaker.
+
+However, not all of the Mazes appear to be unidimensional. In the table below, the omega total score is decomposed into reliability coming from a single "general" factor (omega_h),  a set of factors (omega_grp) and then some other "random error". A good unidimensional test has mostly "general" reliability, and relatively little "group" reliability.
+
+
+```{r Gr5RelTable2}
+
+merge(
+  lapply(Gr5.omega
+         , function(x) data.frame(x$omega.group["g",], row.names = NULL) 
+         %>% round(3)
+  ) %>% 
+    bind_rows(.id="Maze")
+  , lapply(Gr5.alpha
+           , function(x) data.frame(alpha = x$total$raw_alpha, row.names = NULL) 
+           %>% round(3)
+  ) %>% 
+    bind_rows(.id="Maze")
+  , by = "Maze"
+  )%>% 
+  rename(omega_tot = total, omega_h = general, omega_grp = group) %>% 
+  kable
+```
+
+As with the Grade 4 mazes, reliabilities are all very strong in Grade 5 but some of the Mazes may reflect more complex structure. (All of the above are based on assuming there might be 3 factors for each Maze.) In particular Social Science - Canada suggests that the multi-factor version is more explanatory than the single general factor, and ELA - Fear and ELA - Serge are not particularly strongly unidimensional. (Omega h for SSC - Debate is not particularly high, but it is considerably higher than Omega group, which reflects the generally lower reliability of that Maze.)
+
+## No Variance Items
+
+In all Mazes, there are Items with no variance in the scores - typically because all scores were incorrect (either missing or genuinely incorrect attempts). These will have no variance, and are thus not part of the above analyses (both Cronbach's alpha and Mcdonald's omega require items have a variance).
+
+In order to deal with no variance/no responses items, the only solution is to code more data and hope that a larger sample produces greater variability.
